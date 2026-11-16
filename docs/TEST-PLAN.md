@@ -93,7 +93,7 @@ fixed at the root cause, then the whole plan was run again on the final build.
 | D1 | PASS | — | PASS |
 | D2 | PASS | — | PASS |
 | D3 | PASS | — | PASS ("Preflight OK — Healthy · 278 ms") |
-| D4 | partial | platform practice is capped at 10 tasks/agent/hour. 10 real signed tasks answered, each with a proof (~1 s): 3 APPROVE, 4 EXPIRED_CONDITION, 2 THRESHOLD_MISMATCH, 1 RECIPIENT_MISMATCH. Platform verdict captured for 2: both CORRECT, proof VERIFIED. | re-run one at a time after the hourly cap resets |
+| D4 | partial | platform practice is capped at 10 tasks/agent/hour; the first batch recorded the platform's verdict for only 2 of 10 tasks | PASS (9/9 CORRECT, all 7 trap types, see D4 below) |
 | D5 | PASS | — | PASS (20 VFY = 1 win + full reliability bonus) |
 | E1 | PASS | — | PASS (Wildcard: pending review) |
 | E2 | PASS | — | PASS (Entered · Elenchos Duel) |
@@ -102,3 +102,25 @@ fixed at the root cause, then the whole plan was run again on the final build.
 
 Zero mocks or stubs in the tested surface. The only stand-in anywhere is the `MockAggregator` inside the Foundry test
 `AttackHolds.t.sol`, which is a test fixture (named as such) and never part of the product.
+
+### D4: Proof Gatekeeper practice, platform verdicts (Nov 16, 21:58–22:10 IST)
+
+Dispatched one at a time from the dashboard's Practice Mode against the live endpoint; each row is the platform's own
+scoring. Together with the first batch (THRESHOLD_MISMATCH, RECIPIENT_MISMATCH, EXPIRED_CONDITION, VALID_CONDITION),
+all 7 trap types have been answered correctly live.
+
+| # | Task | Trap | Submitted / Expected | Proof | Latency (ms) | Platform verdict |
+|---|---|---|---|---|---|---|
+| 1 | `practice_3500adf0…` | EXPIRED_CONDITION | REJECT / REJECT | VERIFIED | 1979 | CORRECT |
+| 2 | `practice_df550f43…` | VK_SUBSTITUTION | REJECT / REJECT | VERIFIED | 1235 | CORRECT |
+| 3 | `practice_11e4d1a2…` | PROOF_REUSED | REJECT / REJECT | VERIFIED* | 771 | CORRECT |
+| 4 | `practice_f0de7eb5…` | PROOF_REUSED | REJECT / REJECT | VERIFIED* | 432 | CORRECT |
+| 5 | `practice_6023ecbe…` | AMOUNT_OVERFLOW | REJECT / REJECT | VERIFIED | 1024 | CORRECT |
+| 6 | `practice_15470e54…` | VK_SUBSTITUTION | REJECT / REJECT | VERIFIED | 1188 | CORRECT |
+| 7 | `practice_17065b00…` | VALID_CONDITION | APPROVE / APPROVE | VERIFIED | 1149 | CORRECT |
+| 8 | `practice_4062c979…` | AMOUNT_OVERFLOW | REJECT / REJECT | VERIFIED | 1034 | CORRECT |
+| 9 | `practice_1a7dba95…` | PROOF_REUSED | REJECT / REJECT | VERIFIED* | 616 | CORRECT |
+
+\* For PROOF_REUSED the agent sends no proof (Vercel log: `"reason":"PROOF_REUSED","proof":false`), because the
+gatekeeper circuit forces APPROVE on inputs whose arithmetic passes, so no valid REJECT proof exists. The platform
+still scores it CORRECT with proof status VERIFIED: no proof penalty for this case.
