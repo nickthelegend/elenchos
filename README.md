@@ -38,11 +38,23 @@ real tools, and every call shows up as a card.
 - **forge** — a real Groth16 proof from an attacker circuit that mints an arbitrary amount (snarkjs, verified locally).
 - **replay** — reads the **real** zkVerify verifier on Ethereum Sepolia and shows the forged leaf returns `false`.
 - **patch** — applies a proposed fix to a throwaway copy, compiles it with Foundry, and re-scans. A patch counts as
-  verified only when it compiles and the scanner is clean. An OpenAI model adds an independent second opinion; the
-  deterministic verdict stands on its own.
+  verified only when it compiles, the scanner is clean, and it hasn't cheated (deleting or renaming the vulnerable
+  function, or ripping out the receipt check). An OpenAI model adds an independent second opinion; the deterministic
+  verdict stands on its own.
 
 Nothing is mocked. A tool that can't run (no Kurier key for a full aggregated receipt, no OpenAI key for the review)
 says **Setup required** — it never fakes a result.
+
+## What the scanner proves — and what the attack test proves
+
+The scanner is a fast **static pre-filter**: Slither data-dependency analysis that catches the common receipt-consumer
+mistakes. Static analysis has limits — it can miss a statement built from a value written in a *previous* transaction,
+and "a mapping is written" is a weaker signal than "a unique nullifier is enforced." So Elenchos does not rest the
+claim "this fix is real" on the scanner alone. `contracts/test/AttackHolds.t.sol` **proves it dynamically**: a faithful
+mock that vouches only for statements an attacker could really get aggregated (their own circuit's) shows the forgery
+*mints* on the vulnerable contract and *reverts* on the pinned one, with no value moved — and the honest claim still
+works once, then rejects a replay. That runs in CI with no testnet key. The real-verifier replay (reading zkVerify on
+Sepolia) and the full forged-receipt fork test (with a Kurier key) are the on-chain versions of the same proof.
 
 ## Monorepo
 
