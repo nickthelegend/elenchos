@@ -1,0 +1,30 @@
+name: Elenchos scan
+on:
+  push:
+    paths: ['**.sol']
+  pull_request:
+    paths: ['**.sol']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write   # upload-sarif writes to the code-scanning dashboard
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Elenchos
+        run: pip install slither-analyzer==0.11.6
+      - name: Scan zkVerify consumers
+        run: python3 detectors/sarif.py . --out elenchos.sarif
+      - name: Upload results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: elenchos.sarif
+          category: elenchos

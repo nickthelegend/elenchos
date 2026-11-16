@@ -1,0 +1,10 @@
+{
+  "name": "@elenchos/core",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "Elenchos engine: scan zkVerify consumers, verify a proposed patch deterministically (re-scan + diff), and describe findings",
+  "scripts": { "test": "node --test --experimental-strip-types test/*.test.ts" },
+  "dependencies": { "viem": "2.57.13" }
+}
