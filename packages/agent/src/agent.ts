@@ -54,7 +54,7 @@ export async function investigate(opts: { targetPath: string; originalSource: st
   if (!process.env.ANTHROPIC_API_KEY) { emit({ type: 'error', message: 'Setup required: ANTHROPIC_API_KEY for the Elenchos agent' }); return; }
   const client = new Anthropic();
   const ctx: Ctx = { targetPath: opts.targetPath, originalSource: opts.originalSource };
-  const messages: Anthropic.MessageParam[] = [{ role: 'user', content: `Target file: ${opts.targetPath}\n\n${opts.prompt}` }];
+  const messages: Anthropic.MessageParam[] = [{ role: 'user', content: `Target file: ${opts.targetPath}\n\n\`\`\`solidity\n${opts.originalSource}\n\`\`\`\n\n${opts.prompt}` }];
   try {
     for (let step = 0; step < 12; step++) {
       const stream = client.messages.stream({ model: MODEL, max_tokens: 8000, system: SYSTEM, tools: toolDefs, messages }, { signal: opts.signal });

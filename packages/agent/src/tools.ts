@@ -12,7 +12,9 @@ import { groth16Statement } from '@elenchos/forge/src/statement.ts';
 export type ToolEvent = { tool: string; status: 'running' | 'ok' | 'setup' | 'error'; summary: string; detail?: unknown };
 
 const ZKVERIFY = (process.env.ZKVERIFY_SEPOLIA ?? '0xEA0A0f1EfB1088F4ff0Def03741Cb2C64F89361E') as Hex;
-const RPC = process.env.SEPOLIA_RPC_URL;
+// A public read-only Sepolia node is the default so the replay beat works out of the box; override with SEPOLIA_RPC_URL.
+// This only READS the verifier's view function (verifyProofAggregation) — it never sends a transaction.
+const RPC = process.env.SEPOLIA_RPC_URL ?? 'https://ethereum-sepolia-rpc.publicnode.com';
 const abi = parseAbi(['function verifyProofAggregation(uint256,uint256,bytes32,bytes32[],uint256,uint256) view returns (bool)']);
 
 /** E1/E3/E4/E6 scan of one .sol file or a project. */
@@ -35,7 +37,7 @@ export async function forgeTool(recipient: bigint, amount: bigint): Promise<{ st
 
 /** Read the REAL zkVerify verifier (on a fork or Sepolia) to show an un-aggregated / forged leaf returns false. */
 export async function replayTool(leaf: Hex): Promise<{ event: ToolEvent }> {
-  if (!RPC) return { event: { tool: 'replay', status: 'setup', summary: 'Setup required: SEPOLIA_RPC_URL to read the zkVerify verifier on a fork' } };
+  if (!RPC) return { event: { tool: 'replay', status: 'setup', summary: 'Setup required: SEPOLIA_RPC_URL to read the zkVerify verifier' } };
   const client = createPublicClient({ chain: sepolia, transport: http(RPC) });
   try {
     const ok = await client.readContract({ address: ZKVERIFY, abi, functionName: 'verifyProofAggregation',
@@ -52,7 +54,7 @@ export async function replayTool(leaf: Hex): Promise<{ event: ToolEvent }> {
 export async function patchTool(path: string, newSource: string): Promise<{ result: PatchResult; event: ToolEvent }> {
   const result = await verifyPatch(path, newSource);
   return { result, event: { tool: 'patch', status: result.verified ? 'ok' : 'error', summary: result.reason, detail: {
-    verified: result.verified, compiles: result.compiles, cleared: result.cleared, remaining: result.remaining.map((f) => `${f.rule} ${f.function}`) } } };
+    verified: result.verified, compiles: result.compiles, cleared: result.cleared, remaining: result.remaining.map((f) => `${f.rule} ${f.function}`), patchedSource: newSource } } };
 }
 
 export { shutdownProver, poseidon1, proveClaim, groth16Statement };

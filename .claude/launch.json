@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "elenchos", "runtimeExecutable": "node", "runtimeArgs": ["--experimental-strip-types", "packages/agent/src/server.ts"], "port": 8787 }
+  ]
+}

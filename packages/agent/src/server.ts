@@ -16,7 +16,7 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
   if (req.method === 'GET' && url.pathname === '/api/targets') {
     return json(res, 200, { targets: TARGETS.map((t) => ({ id: t.id, title: t.title, language: t.language, blurb: t.blurb, source: source(t) })),
-      ready: { anthropic: Boolean(process.env.ANTHROPIC_API_KEY), openai: Boolean(process.env.OPENAI_API_KEY), rpc: Boolean(process.env.SEPOLIA_RPC_URL), kurier: Boolean(process.env.KURIER_API_KEY) } });
+      ready: { anthropic: Boolean(process.env.ANTHROPIC_API_KEY), openai: Boolean(process.env.OPENAI_API_KEY), rpc: true /* built-in public read-only node; override with SEPOLIA_RPC_URL */, kurier: Boolean(process.env.KURIER_API_KEY) } });
   }
   if (req.method === 'POST' && url.pathname === '/api/investigate') {
     const body = await new Promise<string>((r) => { let d = ''; req.on('data', (c) => (d += c)); req.on('end', () => r(d)); });
