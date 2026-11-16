@@ -1,0 +1,11 @@
+{
+  "name": "elenchos",
+  "private": true,
+  "license": "MIT",
+  "description": "Elenchos: the red team for code that trusts zkVerify proofs",
+  "packageManager": "pnpm@10.29.2",
+  "scripts": {
+    "test": "pnpm -r test",
+    "build": "pnpm -r build"
+  }
+}

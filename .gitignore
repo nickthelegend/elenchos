@@ -1,0 +1,14 @@
+node_modules/
+.env
+.env.*
+!.env.example
+out/
+cache/
+broadcast/
+*.ptau
+*.zkey
+*.wasm
+build/
+dist/
+.loom/
+__pycache__/
