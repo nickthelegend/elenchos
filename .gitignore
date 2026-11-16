@@ -12,3 +12,6 @@ build/
 dist/
 .loom/
 __pycache__/
+.vercel
+!packages/arena/artifacts/vfy-policy.wasm
+!packages/arena/artifacts/vfy-policy_final.zkey
