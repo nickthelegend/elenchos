@@ -121,20 +121,23 @@ def scan(target: str) -> list[Finding]:
                 domain, _agg, leaf = ir.arguments[0], ir.arguments[1], ir.arguments[2]
                 # E1b: leaf straight from a parameter
                 if leaf in params:
+                    file, line = src(leaf)  # point at the parameter the attacker controls
                     findings.append(Finding("E1b", "critical", "The caller supplies the leaf", c.name, fn.full_name, file, line,
                         f"`{leaf.name}` is a parameter and is passed to {VERIFY_FN} unchanged: any statement zkVerify ever verified will pass.",
                         "Rebuild the leaf on-chain from a pinned vkHash and the public inputs the function acts on."))
                 else:
                     for p in params:
                         if is_dependent(leaf, p, fn) and (VK_NAME.search(p.name) or (str(p.type) == "bytes32" and "key" in p.name.lower())):
-                            findings.append(Finding("E1", "critical", "Verification key comes from the caller", c.name, fn.full_name, file, line,
+                            pfile, pline = src(p)  # point at the vk parameter itself
+                            findings.append(Finding("E1", "critical", "Verification key comes from the caller", c.name, fn.full_name, pfile, pline,
                                 f"The leaf checked by {VERIFY_FN} depends on parameter `{p.name}` ({p.type}). An attacker passes the vkHash of any circuit they wrote and a real zkVerify receipt for it.",
                                 "Pin the vkHash (immutable, set in the constructor) and build the statement from it. See PinnedZkVerifyConsumer."))
                 # E6: domain from caller
                 if isinstance(domain, Constant):
                     pass
                 elif domain in params:
-                    findings.append(Finding("E6", "medium", "zkVerify domain comes from the caller", c.name, fn.full_name, file, line,
+                    dfile, dline = src(domain)  # point at the domain parameter
+                    findings.append(Finding("E6", "medium", "zkVerify domain comes from the caller", c.name, fn.full_name, dfile, dline,
                         f"`{domain.name}` is a parameter: the receipt may come from any aggregation domain.",
                         "Pin the domain id (immutable)."))
             # E3: no replay guard
