@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 560" width="1200" height="560" role="img" aria-label="The forged-circuit attack against VulnerableMint and why PinnedMint stops it">
+  <style>
+    .t{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#f2f4f3}
+    .m{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;fill:#f2f4f3}
+    .dim{fill:#a6adb6}.faint{fill:#6b7380}.lime{fill:#c6f24e}.red{fill:#ff6b6b}.cyan{fill:#5ad7ff}
+    .box{fill:#121418;stroke:#2b3038;stroke-width:1.5}
+    .bad{fill:#2a1416;stroke:#ff6b6b;stroke-width:2}
+    .good{fill:#16200c;stroke:#c6f24e;stroke-width:2}
+    .zk{fill:#0e1a20;stroke:#5ad7ff;stroke-width:1.5}
+    .ar{stroke:#6b7380;stroke-width:1.8;fill:none;marker-end:url(#a)}
+  </style>
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#6b7380"/></marker></defs>
+  <rect width="1200" height="560" rx="18" fill="#0a0b0d"/>
+  <text x="40" y="52" class="m lime" font-size="15" letter-spacing="1.5">THE ATTACK, WITH THE REAL VALUES FROM ONE RUN</text>
+  <text x="40" y="86" class="t" font-size="26" font-weight="600">A valid proof of the wrong circuit. zkVerify says yes. The contract decides.</text>
+
+  <text x="40" y="132" class="m dim" font-size="14">1 · WRITE A CIRCUIT</text>
+  <rect x="40" y="144" width="250" height="110" rx="12" class="box"/>
+  <text x="58" y="174" class="m" font-size="15">Attacker.circom</text>
+  <text x="58" y="198" class="m faint" font-size="13">same public interface:</text>
+  <text x="58" y="218" class="m faint" font-size="13">recipient, amount, nullifier</text>
+  <text x="58" y="240" class="m red" font-size="13">constrains nothing</text>
+
+  <path class="ar" d="M292 199 H338"/>
+  <text x="340" y="132" class="m dim" font-size="14">2 · PROVE "MINT ME 1,000,000"</text>
+  <rect x="340" y="144" width="250" height="110" rx="12" class="box"/>
+  <text x="358" y="174" class="m" font-size="15">real Groth16 proof</text>
+  <text x="358" y="198" class="m faint" font-size="13">signals [659918,</text>
+  <text x="358" y="218" class="m faint" font-size="13">  1000000, 1794858469867]</text>
+  <text x="358" y="240" class="m lime" font-size="13">verified locally · 132 ms</text>
+
+  <path class="ar" d="M592 199 H638"/>
+  <text x="640" y="132" class="m dim" font-size="14">3 · ZKVERIFY KEY HASH + LEAF</text>
+  <rect x="640" y="144" width="520" height="110" rx="12" class="zk"/>
+  <text x="658" y="174" class="m cyan" font-size="14">vk_hash_groth16 (a real zkVerify node)</text>
+  <text x="658" y="198" class="m" font-size="13">attacker vk 0xb8e09b08…bdd48a2b</text>
+  <text x="658" y="218" class="m faint" font-size="13">honest claim vk 0x42d82915…47d19f3c (different!)</text>
+  <text x="658" y="240" class="m" font-size="13">forged leaf 0x90c6646e…ff1db32d1</text>
+
+  <text x="40" y="306" class="m dim" font-size="14">4 · THE SAME RECEIPT, TWO CONTRACTS</text>
+  <rect x="40" y="318" width="540" height="150" rx="12" class="bad"/>
+  <text x="60" y="350" class="m red" font-size="16">VulnerableMint.claim(vkHash = 0xb8e0…, …)</text>
+  <text x="60" y="378" class="m dim" font-size="14">leaf rebuilt with the CALLER's key</text>
+  <text x="60" y="400" class="m dim" font-size="14">= the attacker's aggregated leaf</text>
+  <text x="60" y="436" class="t" font-size="24" font-weight="700" fill="#ff6b6b">MINTS 1,000,000 → attacker</text>
+
+  <rect x="620" y="318" width="540" height="150" rx="12" class="good"/>
+  <text x="640" y="350" class="m lime" font-size="16">PinnedMint.claim(attacker, 1000000, …)</text>
+  <text x="640" y="378" class="m dim" font-size="14">leaf rebuilt with the PINNED key 0x42d8…</text>
+  <text x="640" y="400" class="m dim" font-size="14">≠ any leaf the attacker can get aggregated</text>
+  <text x="640" y="436" class="t" font-size="24" font-weight="700" fill="#c6f24e">REVERTS · InvalidReceipt · 0 moved</text>
+
+  <text x="600" y="512" text-anchor="middle" class="t dim" font-size="16">Replay on Sepolia: zkVerify's verifier says the forged leaf is not in real aggregation #270047 (root 0xd3e828a1…).</text>
+  <text x="600" y="538" text-anchor="middle" class="t faint" font-size="14">zkVerify is never fooled. The consumer that lets the caller choose the key is.</text>
+</svg>
