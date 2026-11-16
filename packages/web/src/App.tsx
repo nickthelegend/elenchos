@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { getTargets, investigate, type AgentEvent, type Ready, type Target, type ToolEvent } from './api.ts';
+import { getTargets, investigate, type AgentEvent, type Ready, type Target, type ToolEvent, type Turn } from './api.ts';
 import { Code, Diff } from './highlight.tsx';
 import { Logo, ToolIcon } from './icons.tsx';
 
@@ -15,7 +15,7 @@ const PRESETS = [
   'Is the verification key pinned? Show me what happens if it is not.',
   'Just scan it and rank the findings.',
 ];
-const READY_LABEL: Record<keyof Ready, string> = { anthropic: 'claude', openai: 'openai review', rpc: 'fork rpc', kurier: 'kurier' };
+const READY_LABEL: Record<keyof Ready, string> = { anthropic: 'claude', openai: 'openai review', rpc: 'sepolia rpc', kurier: 'kurier' };
 
 export function App() {
   const [targets, setTargets] = useState<Target[]>([]);
@@ -26,10 +26,12 @@ export function App() {
   const [input, setInput] = useState('');
   const [tab, setTab] = useState<'evidence' | 'diff'>('evidence');
   const [mtab, setMtab] = useState<'chat' | 'evidence' | 'case'>('chat');
+  const [loadError, setLoadError] = useState<string | null>(null);
   const abortRef = useRef<() => void>();
   const bodyRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { getTargets().then((d) => { setTargets(d.targets); setReady(d.ready); }).catch(() => {}); }, []);
+  const load = () => { setLoadError(null); getTargets().then((d) => { setTargets(d.targets); setReady(d.ready); }).catch((e) => setLoadError(String(e?.message ?? e))); };
+  useEffect(load, []);
   const target = targets[sel];
   useEffect(() => { setEntries([]); setTab('evidence'); }, [sel]);
   useEffect(() => { bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: 'smooth' }); }, [entries]);
@@ -38,6 +40,7 @@ export function App() {
     const last = [...entries].reverse().find((e) => e.kind === 'tool' && e.event.tool === 'scan' && Array.isArray(e.event.detail)) as any;
     return (last?.event.detail ?? []) as Finding[];
   }, [entries]);
+  const scanned = entries.some((e) => e.kind === 'tool' && e.event.tool === 'scan' && e.event.status === 'ok');
   const flagged = useMemo(() => new Set(findings.map((f) => f.line)), [findings]);
   const patch = useMemo(() => {
     const last = [...entries].reverse().find((e) => e.kind === 'tool' && e.event.tool === 'patch' && e.event.detail?.patchedSource) as any;
@@ -53,8 +56,29 @@ export function App() {
     return order.map((t, i) => ({ t, done: okd(t), active: i === activeIdx && seen(t) === false && running }));
   }, [entries, running]);
 
+  // The thread so far, as conversation turns: what you asked, and what the agent said and its tools returned.
+  function history(): Turn[] {
+    const turns: Turn[] = [];
+    const add = (role: Turn['role'], text: string) => {
+      const last = turns[turns.length - 1];
+      if (last?.role === role) last.text += `\n${text}`; else turns.push({ role, text });
+    };
+    for (const e of entries) {
+      if (e.kind === 'user') add('user', e.text);
+      else if (e.kind === 'agent') add('assistant', e.text);
+      else if (e.kind === 'tool') {
+        const found = e.event.tool === 'scan' && Array.isArray(e.event.detail)
+          ? (e.event.detail as Finding[]).map((f) => `\n  - ${f.rule} ${f.severity} in ${f.function} at line ${f.line}: ${f.title}`).join('') : '';
+        add('assistant', `[${e.event.tool} → ${e.event.status}] ${e.event.summary}${found}`);
+      }
+      else add('assistant', `[second opinion → ${e.status}] ${e.text}`);
+    }
+    return turns.slice(-20).map((t) => ({ ...t, text: t.text.slice(-6000) }));
+  }
+
   function run(prompt: string) {
     if (!target || running) return;
+    const past = history();
     setEntries((e) => [...e, { kind: 'user', text: prompt }]);
     setRunning(true);
     let agentBuf = '';
@@ -65,12 +89,20 @@ export function App() {
       else if (ev.type === 'review') { push({ kind: 'review', status: ev.status, text: ev.text }); }
       else if (ev.type === 'error') { agentBuf = ''; push({ kind: 'agent', text: `⚠ ${ev.message}` }); }
     };
-    abortRef.current = investigate(target.id, prompt, onEvent, () => setRunning(false));
+    abortRef.current = investigate(target.id, prompt, past, onEvent, () => { abortRef.current = undefined; setRunning(false); });
+  }
+
+  function stop() {
+    if (!abortRef.current) return;
+    abortRef.current();
+    setEntries((e) => [...e, { kind: 'agent', text: 'Stopped. Ask again whenever you like.' }]);
   }
 
   const verdict = patch?.detail?.verified ? { cls: 'safe', label: 'Verdict', big: 'Fix verified' }
+    : patch ? { cls: 'vuln', label: 'Patch verdict', big: 'Fix rejected' }
     : findings.some((f) => f.severity === 'critical') ? { cls: 'vuln', big: 'Exploitable', label: `${findings.length} findings` }
     : findings.length ? { cls: 'vuln', big: `${findings.length} findings`, label: 'Review' }
+    : scanned ? { cls: 'safe', big: 'No holes found', label: 'Scanner verdict' }
     : { cls: 'pending', big: 'Not yet examined', label: 'Verdict' };
 
   return (
@@ -96,7 +128,8 @@ export function App() {
           <div className="col-head"><h2>Investigation</h2>{running && <span className="chip on"><span className="dot" />live</span>}</div>
           <div className="col-body" ref={bodyRef}>
             <div className="chat">
-              {entries.length === 0 && <div className="empty">Pick an investigation below.<br />The agent scans, forges a proof, reads the real verifier, and verifies a fix — live.</div>}
+              {loadError && <div className="empty error" role="alert">{loadError}<br /><button className="retry" onClick={load}>Try again</button></div>}
+              {!loadError && entries.length === 0 && <div className="empty">Pick an investigation below.<br />The agent scans, forges a proof, reads the real verifier, and verifies a fix — live.</div>}
               {entries.map((e, i) => <EntryView key={i} e={e} />)}
               {running && entries[entries.length - 1]?.kind === 'agent' && <span className="cursor" />}
             </div>
@@ -104,7 +137,9 @@ export function App() {
           {entries.length === 0 && <div className="presets">{PRESETS.map((p) => <button key={p} disabled={!target || running} onClick={() => run(p)}>{p}</button>)}</div>}
           <form className="composer" onSubmit={(e) => { e.preventDefault(); if (input.trim()) { run(input.trim()); setInput(''); } }}>
             <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={running ? 'Investigating…' : 'Ask the agent about this contract…'} disabled={running || !target} />
-            <button type="submit" disabled={running || !input.trim()}>Send</button>
+            {running
+              ? <button type="button" className="stop" onClick={stop}>Stop</button>
+              : <button type="submit" disabled={!input.trim()}>Send</button>}
           </form>
         </section>
 
@@ -113,7 +148,7 @@ export function App() {
           <div className="col-head">
             <div className="ev-tabs">
               <button aria-pressed={tab === 'evidence'} onClick={() => setTab('evidence')}>{target?.title ?? 'source'}</button>
-              {patch?.detail?.patchedSource && <button aria-pressed={tab === 'diff'} onClick={() => setTab('diff')}>proposed fix</button>}
+              {patch?.detail?.patchedSource && <button aria-pressed={tab === 'diff'} onClick={() => setTab('diff')}>{patch.detail.verified ? 'proposed fix · verified' : 'proposed fix · rejected'}</button>}
             </div>
           </div>
           <div className="col-body">
@@ -132,7 +167,7 @@ export function App() {
                 <div className="v-label">{verdict.label}</div>
                 <div className="v-big">{verdict.big}</div>
               </div>
-              {findings.length === 0 && <div className="empty">No findings yet.</div>}
+              {findings.length === 0 && <div className="empty">{scanned ? 'The scanner found none of the five receipt-consumer holes (E1, E1b, E3, E4, E6).' : 'No findings yet.'}</div>}
               {findings.map((f, i) => (
                 <div key={i} className={`finding ${f.severity}`}>
                   <div className="f-top"><span className="f-rule">{f.rule}</span><span className="f-sev">{f.severity}</span></div>
@@ -172,7 +207,7 @@ function EntryView({ e }: { e: Entry }) {
 }
 
 function ProofStrip({ steps }: { steps: { t: string; done: boolean; active: boolean }[] }) {
-  const LABEL: Record<string, string> = { scan: 'Scan', forge: 'Forge proof', replay: 'Replay on fork', patch: 'Verify fix' };
+  const LABEL: Record<string, string> = { scan: 'Scan', forge: 'Forge proof', replay: 'Ask zkVerify', patch: 'Verify fix' };
   return (
     <div className="proofstrip">
       <div className="ps-title">Proof strip</div>

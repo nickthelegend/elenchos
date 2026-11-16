@@ -24,25 +24,28 @@ The four holes you look for, and the fix for each:
 - E6 the zkVerify domain id comes from the caller -> pin it as an immutable.
 
 Work in this order and narrate briefly as you go: scan the target; if there is a critical finding, forge a proof to
-show what the hole lets an attacker mint, and read the real zkVerify verifier to show the forged leaf is rejected on
-its own; then propose a patched version of the file and call the patch tool, which compiles it and re-scans. The patch tool also rejects a fix that only cheats the scanner (deleting
+show what the hole lets an attacker mint, then replay that forged leaf against the real zkVerify verifier on Sepolia to
+show zkVerify itself is not fooled (the bug is the consumer trusting the caller's key); then propose a patched version of the file and call the patch tool, which compiles it and re-scans. The patch tool also rejects a fix that only cheats the scanner (deleting
 or renaming the vulnerable function, or ripping the receipt check out) — if it reports the patch cheated, fix it
 properly, do not claim success. Only claim a fix works after the patch tool verifies it. Never invent a result a
 tool did not return. Be concise.`;
 
-type Ctx = { targetPath: string; originalSource: string };
+type Ctx = { targetPath: string; originalSource: string; forgedLeaf?: `0x${string}` };
 
 const toolDefs: Anthropic.Tool[] = [
   { name: 'scan', description: 'Run the Elenchos static scanner on the target contract. Returns E1/E1b/E3/E4/E6 findings.', input_schema: { type: 'object', properties: {}, additionalProperties: false } },
   { name: 'forge', description: 'Prove, locally and for real, a Groth16 forgery that mints an amount to a recipient using an attacker circuit — shows what an E1 hole lets through.', input_schema: { type: 'object', properties: { recipient: { type: 'string', description: 'hex address or decimal' }, amount: { type: 'string', description: 'token amount to forge, e.g. 1000000' } }, required: ['amount'], additionalProperties: false } },
-  { name: 'replay', description: 'Read the real zkVerify verifier (on a Sepolia fork) to show that a forged / un-aggregated leaf is rejected on its own.', input_schema: { type: 'object', properties: { leaf: { type: 'string', description: 'a bytes32 leaf, 0x-prefixed' } }, required: ['leaf'], additionalProperties: false } },
+  { name: 'replay', description: 'Ask the real zkVerify verifier on Ethereum Sepolia whether the leaf from the last forge call is in its latest real aggregation. Takes no input: it always replays exactly the leaf forge produced. Call forge first.', input_schema: { type: 'object', properties: {}, additionalProperties: false } },
   { name: 'patch', description: 'Verify a proposed fix: supply the FULL new source for the target file. It is compiled on a throwaway copy and re-scanned; it is verified only if it compiles and the scanner is clean.', input_schema: { type: 'object', properties: { newSource: { type: 'string', description: 'the complete patched Solidity source for the target file' } }, required: ['newSource'], additionalProperties: false } },
 ];
 
 async function runTool(name: string, input: any, ctx: Ctx, emit: (e: AgentEvent) => void): Promise<string> {
   if (name === 'scan') { const { findings, event } = await scanTool(ctx.targetPath); emit({ type: 'tool', event }); return JSON.stringify(findings); }
-  if (name === 'forge') { const r = await forgeTool(BigInt(input.recipient ?? '0xA11cE'), BigInt(input.amount)); emit({ type: 'tool', event: r.event }); return JSON.stringify(r.event.detail); }
-  if (name === 'replay') { const r = await replayTool(input.leaf); emit({ type: 'tool', event: r.event }); return r.event.summary; }
+  if (name === 'forge') { const r = await forgeTool(BigInt(input.recipient ?? '0xA11cE'), BigInt(input.amount)); if (r.leaf) ctx.forgedLeaf = r.leaf; emit({ type: 'tool', event: r.event }); return JSON.stringify({ summary: r.event.summary, ...(r.event.detail as object) }); }
+  if (name === 'replay') {
+    if (!ctx.forgedLeaf) return 'No forged leaf yet: call forge first (replay only checks a leaf that forge really produced).';
+    const r = await replayTool(ctx.forgedLeaf); emit({ type: 'tool', event: r.event }); return r.event.summary;
+  }
   if (name === 'patch') {
     const r = await patchTool(ctx.targetPath, input.newSource); emit({ type: 'tool', event: r.event });
     const review = await reviewPatch(ctx.originalSource, input.newSource, r.result); emit({ type: 'review', status: review.status, text: review.text });
@@ -52,11 +55,20 @@ async function runTool(name: string, input: any, ctx: Ctx, emit: (e: AgentEvent)
 }
 
 /** Runs one investigation turn for the given target and user prompt, emitting events as it goes. */
-export async function investigate(opts: { targetPath: string; originalSource: string; prompt: string; signal?: AbortSignal }, emit: (e: AgentEvent) => void): Promise<void> {
+export async function investigate(opts: { targetPath: string; originalSource: string; prompt: string; history?: { role: 'user' | 'assistant'; text: string }[]; signal?: AbortSignal }, emit: (e: AgentEvent) => void): Promise<void> {
   if (!process.env.ANTHROPIC_API_KEY) { emit({ type: 'error', message: 'Setup required: ANTHROPIC_API_KEY for the Elenchos agent' }); return; }
   const client = new Anthropic();
   const ctx: Ctx = { targetPath: opts.targetPath, originalSource: opts.originalSource };
-  const messages: Anthropic.MessageParam[] = [{ role: 'user', content: `Target file: ${opts.targetPath}\n\n\`\`\`solidity\n${opts.originalSource}\n\`\`\`\n\n${opts.prompt}` }];
+  // Earlier turns of this case, oldest first. The first turn must be the user's, and roles must alternate.
+  const past = (opts.history ?? []).filter((t) => t.text.trim());
+  while (past.length && past[0].role !== 'user') past.shift();
+  const turns: { role: 'user' | 'assistant'; text: string }[] = [];
+  for (const t of past) { const last = turns[turns.length - 1]; if (last?.role === t.role) last.text += `\n${t.text}`; else turns.push({ ...t }); }
+  if (turns.length && turns[turns.length - 1].role === 'user') turns.pop(); // an unanswered question (e.g. stopped) is dropped
+  const header = `Target file: ${opts.targetPath}\n\n\`\`\`solidity\n${opts.originalSource}\n\`\`\``;
+  const messages: Anthropic.MessageParam[] = turns.length
+    ? [{ role: 'user', content: `${header}\n\n${turns[0].text}` }, ...turns.slice(1).map((t) => ({ role: t.role, content: t.text })), { role: 'user', content: opts.prompt }]
+    : [{ role: 'user', content: `${header}\n\n${opts.prompt}` }];
   try {
     for (let step = 0; step < 12; step++) {
       const stream = client.messages.stream({ model: MODEL, max_tokens: 8000, system: SYSTEM, tools: toolDefs, messages }, { signal: opts.signal });
