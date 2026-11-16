@@ -8,6 +8,11 @@ impact, reads the real zkVerify verifier to show the forged leaf is rejected on 
 > ἔλεγχος — the Socratic cross-examination that exposes a false claim. Here the claim is "this proof means what you
 > think it means."
 
+**▶ [Watch the 1:40 demo](https://github.com/nickthelegend/elenchos/releases/download/v0.1.0/elenchos-film.mp4)** (recorded live:
+real Claude, Slither, snarkjs, a zkVerify node and the Sepolia verifier) · **[Read the write-up: "zkVerify verified both proofs"](docs/zkverify-verified-both.md)**
+
+![The Elenchos case room after a full investigation: three findings, a forged proof, zkVerify's answer, and a verified fix](docs/img/case-room-verified.jpg)
+
 ## Why this exists
 
 zkVerify lets a contract act on a cheap on-chain receipt instead of verifying a SNARK itself. The receipt only says
@@ -16,7 +21,9 @@ caller, never recording what it consumed, moving value before it checks — will
 attacker wrote. These bugs look fine in a normal test, because a normal test never brings an attacker's own valid
 receipt. Elenchos brings one.
 
-## The four holes it looks for
+<a id="rules"></a>
+
+## The five holes it looks for
 
 | Rule | The hole | The fix |
 |---|---|---|

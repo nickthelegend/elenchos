@@ -6,6 +6,7 @@ export const ToolIcon = ({ name }: { name: string }) => {
   if (name === 'scan') return <svg viewBox="0 0 24 24" {...S} style={{ color: 'var(--lime)' }}><circle cx="11" cy="11" r="6"/><path d="m20 20-3.5-3.5"/></svg>;
   if (name === 'forge') return <svg viewBox="0 0 24 24" {...S} style={{ color: 'var(--red)' }}><path d="M12 3v4M12 17v4M5 12H3M21 12h-2M6 6l2 2M16 16l2 2M6 18l2-2M16 8l2-2"/><circle cx="12" cy="12" r="3"/></svg>;
   if (name === 'replay') return <svg viewBox="0 0 24 24" {...S} style={{ color: 'var(--cyan)' }}><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 4v4h4"/></svg>;
-  if (name === 'patch') return <svg viewBox="0 0 24 24" {...S} style={{ color: 'var(--lime)' }}><path d="M20 6 9 17l-5-5"/></svg>;
+  // a wrench, not a check mark: the tool card's status chip, not the icon, says whether the fix held
+  if (name === 'patch') return <svg viewBox="0 0 24 24" {...S} style={{ color: 'var(--amber)' }}><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3.6 17.4a1.4 1.4 0 0 0 2 2l5.7-5.7a4 4 0 0 0 5.4-5.4l-2.5 2.5-2-.5-.5-2z"/></svg>;
   return null;
 };
