@@ -1,0 +1,16 @@
+{
+  "name": "@elenchos/agent",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "Elenchos agent: a chat-driven red team for zkVerify consumers. Claude triages and explains with visible tool calls (scan, forge, replay, patch); an OpenAI model gives a second opinion on each patch.",
+  "scripts": { "test": "node --test --experimental-strip-types test/*.test.ts", "dev": "node --experimental-strip-types src/server.ts" },
+  "dependencies": {
+    "@anthropic-ai/sdk": "1.8.0",
+    "@elenchos/core": "workspace:*",
+    "@elenchos/forge": "workspace:*",
+    "openai": "7.57.0",
+    "viem": "2.57.13"
+  }
+}
