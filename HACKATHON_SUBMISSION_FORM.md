@@ -2,7 +2,7 @@
 
 **Project title:** Elenchos — a red team for code that trusts zkVerify proofs
 
-**GitHub repo:** https://github.com/nickthelegend/elenchos  *(push pending Nick's OK)*
+**GitHub repo:** https://github.com/nickthelegend/elenchos
 
 **Agent endpoint (optional):** the case-room agent runs over SSE at `/api/investigate`; a reproducible host is the
 Docker image in the repo. (Our Steal the VFY agent for the same event is live at `https://elenchos-duel.vercel.app/agent`.)
@@ -25,7 +25,7 @@ required" instead of faking a result.
 
 It ships as a monorepo: the detector (with SARIF output and a GitHub Action so findings show inline on a PR), a safe
 `PinnedZkVerifyConsumer` base contract, the proof/attack engine, the deterministic patch verifier, the agent, and the
-case-room UI. 21 real tests pass; the 3 that need a full aggregated receipt are honestly skipped until a Kurier key.
+case-room UI. 37 real tests pass; the 3 that need a full aggregated receipt are honestly skipped until a Kurier key.
 
 **Proof reference (optional):** the replay tool reads zkVerify's verifier at `0xEA0A0f1EfB1088F4ff0Def03741Cb2C64F89361E`
 on Sepolia and shows a forged leaf is rejected. The end-to-end forged-receipt exploit on a Sepolia fork is in
