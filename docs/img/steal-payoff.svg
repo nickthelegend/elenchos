@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 520" width="1200" height="520" role="img" aria-label="What always-extract-10 gains per turn against each opponent move">
+  <style>
+    .t{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;fill:#f2f4f3}
+    .m{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;fill:#f2f4f3}
+    .dim{fill:#a6adb6}.faint{fill:#6b7380}.lime{fill:#c6f24e}.red{fill:#ff6b6b}.amber{fill:#ffbe4d}
+    .row{fill:#121418;stroke:#23272e;stroke-width:1}
+  </style>
+  <rect width="1200" height="520" rx="18" fill="#0a0b0d"/>
+  <text x="40" y="52" class="m lime" font-size="15" letter-spacing="1.5">STEAL THE VFY · OUR POLICY: EXTRACT 10 EVERY TURN (10,0,0,0)</text>
+  <text x="40" y="88" class="t" font-size="26" font-weight="600">Whatever they do, taking 10 never loses the turn.</text>
+
+  <text x="60" y="140" class="m faint" font-size="14">THEIR MOVE</text>
+  <text x="420" y="140" class="m faint" font-size="14">US</text>
+  <text x="560" y="140" class="m faint" font-size="14">THEM</text>
+  <text x="720" y="140" class="m faint" font-size="14">MARGIN / TURN</text>
+  <text x="900" y="140" class="m faint" font-size="14">SEEN IN OUR MATCH</text>
+
+  <rect x="40" y="156" width="1120" height="58" rx="10" class="row"/>
+  <text x="60" y="192" class="t" font-size="20" font-weight="600">EXTRACT 10 (the same policy)</text>
+  <text x="420" y="192" class="m" font-size="20">±0</text><text x="560" y="192" class="m" font-size="20">±0</text>
+  <text x="720" y="192" class="m amber" font-size="20">0 · draw</text>
+  <text x="900" y="192" class="m faint" font-size="15">the leaders</text>
+
+  <rect x="40" y="222" width="1120" height="58" rx="10" class="row"/>
+  <text x="60" y="258" class="t" font-size="20" font-weight="600">EXTRACT 5</text>
+  <text x="420" y="258" class="m lime" font-size="20">+5</text><text x="560" y="258" class="m red" font-size="20">−5</text>
+  <text x="720" y="258" class="m lime" font-size="20">+10</text>
+  <text x="900" y="258" class="m dim" font-size="15">turns 1–11 vs A5YFAM</text>
+
+  <rect x="40" y="288" width="1120" height="58" rx="10" class="row"/>
+  <text x="60" y="324" class="t" font-size="20" font-weight="600">FORTIFY (pay 2, block 6)</text>
+  <text x="420" y="324" class="m lime" font-size="20">+4</text><text x="560" y="324" class="m red" font-size="20">−6</text>
+  <text x="720" y="324" class="m lime" font-size="20">+10</text>
+  <text x="900" y="324" class="m dim" font-size="15">turns 12–17 vs A5YFAM</text>
+
+  <rect x="40" y="354" width="1120" height="58" rx="10" class="row"/>
+  <text x="60" y="390" class="t" font-size="20" font-weight="600">HOLD</text>
+  <text x="420" y="390" class="m lime" font-size="20">+10</text><text x="560" y="390" class="m red" font-size="20">−10</text>
+  <text x="720" y="390" class="m lime" font-size="20">+20</text>
+  <text x="900" y="390" class="m faint" font-size="15">—</text>
+
+  <text x="600" y="458" text-anchor="middle" class="t dim" font-size="17">All 87,120 policies the official circuit allows were searched: none beats it. Two copies always draw.</text>
+  <text x="600" y="486" text-anchor="middle" class="t faint" font-size="15">Every move ships a Groth16 proof that it follows the strategy committed before the match. Final: 180 – 2.</text>
+</svg>

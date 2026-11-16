@@ -9,7 +9,7 @@ impact, reads the real zkVerify verifier to show the forged leaf is rejected on 
 > think it means."
 
 **▶ [Watch the 1:40 demo](https://github.com/nickthelegend/elenchos/releases/download/v0.1.0/elenchos-film.mp4)** (recorded live:
-real Claude, Slither, snarkjs, a zkVerify node and the Sepolia verifier) · **[Read the write-up: "zkVerify verified both proofs"](docs/zkverify-verified-both.md)**
+real Claude, Slither, snarkjs, a zkVerify node and the Sepolia verifier) · **[Read the write-up: "zkVerify verified both proofs"](docs/zkverify-verified-both.md)** · **[How we played all four tracks](docs/agent-games-four-tracks.md)**
 
 ![The Elenchos case room after a full investigation: three findings, a forged proof, zkVerify's answer, and a verified fix](docs/img/case-room-verified.jpg)
 
