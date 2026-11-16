@@ -36,8 +36,8 @@ test('patch tool verifies a pinned fix and rejects a cosmetic one', async () => 
 });
 
 test('replay tool reports Setup required without an RPC', async () => {
-  const saved = process.env.SEPOLIA_RPC_URL; delete process.env.SEPOLIA_RPC_URL;
+  const saved = process.env.SEPOLIA_RPC_URL; process.env.SEPOLIA_RPC_URL = '';
   const { event } = await replayTool('0x' + '11'.repeat(32) as `0x${string}`);
   assert.equal(event.status, 'setup');
-  if (saved) process.env.SEPOLIA_RPC_URL = saved;
+  if (saved === undefined) delete process.env.SEPOLIA_RPC_URL; else process.env.SEPOLIA_RPC_URL = saved;
 });

@@ -1,0 +1,83 @@
+# Elenchos
+
+**A red team for smart contracts that trust zkVerify proofs.** Elenchos cross-examines a contract that consumes
+zkVerify aggregation receipts: it scans for the ways a consumer can be fooled, forges a real proof to show the
+impact, reads the real zkVerify verifier to show the forged leaf is rejected on its own, and then proposes a fix and
+**verifies it by compiling and re-scanning** — not by asking a model to trust itself.
+
+> ἔλεγχος — the Socratic cross-examination that exposes a false claim. Here the claim is "this proof means what you
+> think it means."
+
+## Why this exists
+
+zkVerify lets a contract act on a cheap on-chain receipt instead of verifying a SNARK itself. The receipt only says
+*some* statement was aggregated. A consumer that builds the statement wrong — taking the verification key from the
+caller, never recording what it consumed, moving value before it checks — will accept a proof of a circuit the
+attacker wrote. These bugs look fine in a normal test, because a normal test never brings an attacker's own valid
+receipt. Elenchos brings one.
+
+## The four holes it looks for
+
+| Rule | The hole | The fix |
+|---|---|---|
+| **E1** | the verification key comes from the caller | pin it as an immutable set in the constructor |
+| **E1b** | the caller passes the aggregation leaf itself | rebuild the leaf on-chain from the pinned vk and the inputs |
+| **E3** | a receipt is checked but never recorded | record the statement hash; reject the second use |
+| **E4** | value moves without checking any receipt | gate the action on a receipt consumed in the same call |
+| **E6** | the zkVerify domain id comes from the caller | pin the domain as an immutable |
+
+`PinnedZkVerifyConsumer` (in `contracts/src`) is the safe base that closes all of them; `VulnerableMint` is the
+on-camera target that has them.
+
+## The agent
+
+Elenchos is chat-driven. You ask it about a contract and watch it work: Claude drives the investigation with four
+real tools, and every call shows up as a card.
+
+- **scan** — the Slither-based detector (`detectors/elenchos_scan.py`), real data-dependency analysis.
+- **forge** — a real Groth16 proof from an attacker circuit that mints an arbitrary amount (snarkjs, verified locally).
+- **replay** — reads the **real** zkVerify verifier on Ethereum Sepolia and shows the forged leaf returns `false`.
+- **patch** — applies a proposed fix to a throwaway copy, compiles it with Foundry, and re-scans. A patch counts as
+  verified only when it compiles and the scanner is clean. An OpenAI model adds an independent second opinion; the
+  deterministic verdict stands on its own.
+
+Nothing is mocked. A tool that can't run (no Kurier key for a full aggregated receipt, no OpenAI key for the review)
+says **Setup required** — it never fakes a result.
+
+## Monorepo
+
+| Package | What it is |
+|---|---|
+| `contracts/` | Foundry project: `PinnedZkVerifyConsumer`, the `VulnerableMint` / `PinnedMint` demo, statement-hash parity and forged-receipt fork tests |
+| `detectors/` | the Python scanner (`elenchos_scan.py`) and its SARIF output (`sarif.py`) for GitHub code scanning |
+| `packages/forge` | real Groth16 proofs, zkVerify statement hashing, and the Kurier client + end-to-end attack script |
+| `packages/core` | the engine: scan-as-data and the deterministic patch verifier |
+| `packages/agent` | the chat agent (Claude + tools), the OpenAI reviewer, and the SSE server |
+| `packages/web` | the case-room UI |
+| `packages/arena` | a bonus: the Steal the VFY agent for the same Agent Games event (see its own README) |
+
+## Run it
+
+```bash
+pnpm install
+pnpm -r test                     # 21 tests; the 3 forged-receipt fork tests skip until a Kurier key is set
+(cd packages/web && pnpm build)  # build the UI
+ANTHROPIC_API_KEY=... node --experimental-strip-types packages/agent/src/server.ts
+# open http://localhost:8787
+```
+
+Or with Docker (bundles Foundry, Slither, Node):
+
+```bash
+docker build -t elenchos . && docker run -p 8787:8787 -e ANTHROPIC_API_KEY=... elenchos
+```
+
+Optional keys unlock more: `OPENAI_API_KEY` (second opinion), `SEPOLIA_RPC_URL` (your own fork node; a public one is
+the default), `KURIER_API_KEY` (a full real aggregated receipt for the fork tests).
+
+## The scanner as CI
+
+`.github/workflows/elenchos.yml` runs the scan on every `.sol` change and uploads SARIF, so findings appear inline in
+a pull request. See [TESTING.md](TESTING.md) for the full test table and [docs/](docs/) for the architecture.
+
+MIT © 2026 Nivesh Gajengi
