@@ -25,7 +25,7 @@ required" instead of faking a result.
 
 It ships as a monorepo: the detector (with SARIF output and a GitHub Action so findings show inline on a PR), a safe
 `PinnedZkVerifyConsumer` base contract, the proof/attack engine, the deterministic patch verifier, the agent, and the
-case-room UI. 37 real tests pass; the 3 that need a full aggregated receipt are honestly skipped until a Kurier key.
+case-room UI. 40 real tests pass; the 3 that need a full aggregated receipt are honestly skipped until a Kurier key.
 
 **Proof reference (optional):** the replay tool reads zkVerify's verifier at `0xEA0A0f1EfB1088F4ff0Def03741Cb2C64F89361E`
 on Sepolia and shows a forged leaf is rejected. The end-to-end forged-receipt exploit on a Sepolia fork is in
