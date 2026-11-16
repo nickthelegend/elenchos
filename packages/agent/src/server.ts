@@ -13,7 +13,7 @@ const WEB = resolve(fileURLToPath(new URL('../../web/dist/', import.meta.url)));
 const PORT = Number(process.env.PORT ?? 8787);
 const json = (res: any, code: number, body: unknown) => { res.writeHead(code, { 'content-type': 'application/json', 'access-control-allow-origin': '*' }); res.end(JSON.stringify(body)); };
 
-const MAX_BODY = 16 * 1024;
+const MAX_BODY = 256 * 1024;
 class TooLarge extends Error {}
 const readBody = (req: any) => new Promise<string>((ok, fail) => {
   let d = ''; let over = Number(req.headers['content-length'] ?? 0) > MAX_BODY;
@@ -43,7 +43,7 @@ async function route(req: any, res: any) {
     const { targetId, prompt, history = [] } = parsed as { targetId?: string; prompt?: string; history?: unknown };
     if (prompt !== undefined && (typeof prompt !== 'string' || prompt.length > 4000)) return json(res, 400, { error: 'prompt must be a string of at most 4000 characters' });
     const turnsOk = Array.isArray(history) && history.length <= 20 && history.every((h) =>
-      h && typeof h === 'object' && (h.role === 'user' || h.role === 'assistant') && typeof h.text === 'string' && h.text.length <= 8000);
+      h && typeof h === 'object' && (h.role === 'user' || h.role === 'assistant') && typeof h.text === 'string' && h.text.length <= 20000);
     if (!turnsOk) return json(res, 400, { error: 'history must be at most 20 {role: "user"|"assistant", text} turns' });
     const t = findTarget(targetId);
     if (!t) return json(res, 404, { error: 'unknown target' });

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { getTargets, investigate, type AgentEvent, type Ready, type Target, type ToolEvent, type Turn } from './api.ts';
 import { Code, Diff } from './highlight.tsx';
 import { Logo, ToolIcon } from './icons.tsx';
+import { Markdown } from './markdown.tsx';
 
 type Finding = { rule: string; severity: 'critical' | 'high' | 'medium'; title: string; function: string; line: number; evidence: string; fix: string };
 type Entry =
@@ -69,11 +70,13 @@ export function App() {
       else if (e.kind === 'tool') {
         const found = e.event.tool === 'scan' && Array.isArray(e.event.detail)
           ? (e.event.detail as Finding[]).map((f) => `\n  - ${f.rule} ${f.severity} in ${f.function} at line ${f.line}: ${f.title}`).join('') : '';
-        add('assistant', `[${e.event.tool} → ${e.event.status}] ${e.event.summary}${found}`);
+        const src = e.event.tool === 'patch' && e.event.detail?.patchedSource
+          ? `\nThe exact source submitted to the patch tool:\n\`\`\`solidity\n${e.event.detail.patchedSource}\n\`\`\`` : '';
+        add('assistant', `[${e.event.tool} → ${e.event.status}] ${e.event.summary}${found}${src}`);
       }
       else add('assistant', `[second opinion → ${e.status}] ${e.text}`);
     }
-    return turns.slice(-20).map((t) => ({ ...t, text: t.text.slice(-6000) }));
+    return turns.slice(-20).map((t) => ({ ...t, text: t.text.slice(-16000) }));
   }
 
   function run(prompt: string) {
@@ -189,7 +192,7 @@ export function App() {
 
 function EntryView({ e }: { e: Entry }) {
   if (e.kind === 'user') return <div className="msg user">{e.text}</div>;
-  if (e.kind === 'agent') return <div className="msg agent">{e.text}</div>;
+  if (e.kind === 'agent') return <div className="msg agent"><Markdown text={e.text} /></div>;
   if (e.kind === 'review') return <div className="review"><b>second opinion {e.status === 'setup' ? '· setup required' : e.status === 'error' ? '· error' : ''}</b>{e.text}</div>;
   const ev = e.event;
   return (
