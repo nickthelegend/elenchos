@@ -8,6 +8,7 @@ import { scan as coreScan, bySeverity, type Finding } from '@elenchos/core/src/s
 import { verifyPatch, type PatchResult } from '@elenchos/core/src/patch.ts';
 import { proveForgery, poseidon1, proveClaim, shutdownProver } from '@elenchos/forge/src/prove.ts';
 import { groth16Statement } from '@elenchos/forge/src/statement.ts';
+import { zkVerifyVkHash } from '@elenchos/forge/src/vkhash.ts';
 
 export type ToolEvent = { tool: string; status: 'running' | 'ok' | 'setup' | 'error'; summary: string; detail?: unknown };
 
@@ -22,32 +23,55 @@ export async function scanTool(path: string): Promise<{ findings: Finding[]; eve
     summary: findings.length ? `${findings.length} finding(s), ${crit} critical` : 'no findings', detail: findings } };
 }
 
-/** Prove, locally and for real, a Groth16 forgery that mints `amount` to `recipient` with the attacker circuit. */
-export async function forgeTool(recipient: bigint, amount: bigint): Promise<{ statement: Hex; event: ToolEvent; proof: unknown }> {
+/** Prove, locally and for real, a Groth16 forgery that mints `amount` to `recipient` with the attacker circuit, then
+ *  compute the exact leaf zkVerify would aggregate for it: the attacker key's hash comes from a real zkVerify node. */
+export async function forgeTool(recipient: bigint, amount: bigint): Promise<{ leaf: Hex | null; event: ToolEvent; proof: unknown }> {
   const forged = await proveForgery(recipient, amount, BigInt(Date.now()));
-  // vkHash of the attacker circuit as zkVerify would compute it is only known after registration; here we report
-  // the local proof and its public signals. The leaf shown is illustrative until a Kurier registration pins vkHash.
-  return { statement: '0x' as Hex, proof: forged.proof, event: { tool: 'forge', status: 'ok',
-    summary: `forged a valid proof minting ${amount} to 0x${recipient.toString(16).slice(0, 8)}… in ${forged.ms} ms (verified locally)`,
-    detail: { publicSignals: forged.publicSignals, ms: forged.ms, verifiedLocally: forged.verifiedLocally } } };
+  const base = { publicSignals: forged.publicSignals, ms: forged.ms, verifiedLocally: forged.verifiedLocally };
+  const who = `0x${recipient.toString(16).slice(0, 8)}…`;
+  try {
+    const vkHash = await zkVerifyVkHash(forged.vk);
+    const leaf = groth16Statement(vkHash, forged.publicSignals.map(BigInt));
+    return { leaf, proof: forged.proof, event: { tool: 'forge', status: 'ok',
+      summary: `forged a valid proof minting ${amount} to ${who} in ${forged.ms} ms (verified locally); its zkVerify leaf is ${leaf.slice(0, 10)}…`,
+      detail: { ...base, attackerVkHash: vkHash, leaf } } };
+  } catch (e) {
+    return { leaf: null, proof: forged.proof, event: { tool: 'forge', status: 'error',
+      summary: `forged a valid proof minting ${amount} to ${who} (verified locally), but could not get its zkVerify leaf: ${String(e).slice(0, 140)}`, detail: base } };
+  }
 }
 
-/** Read the REAL zkVerify verifier (on a fork or Sepolia) to show an un-aggregated / forged leaf returns false. */
+const RECEIPT_EVENT = '0x431e1446261f5ed64f6fcd5c8a75fe76dcc7c2c207555eeb6cf27749e78ca226'; // the verifier's new-aggregation event
+
+/** The most recent real aggregation posted to zkVerify's Sepolia verifier, read from its own events. */
+async function latestAggregation(client: ReturnType<typeof createPublicClient>) {
+  const head = await client.getBlockNumber();
+  for (let to = head; to > head - 200_000n; to -= 10_000n) {
+    const logs = await client.getLogs({ address: ZKVERIFY, fromBlock: to - 9_999n, toBlock: to } as never) as { topics: Hex[]; blockNumber: bigint }[];
+    const hits = logs.filter((l) => l.topics[0] === RECEIPT_EVENT);
+    if (hits.length) { const l = hits[hits.length - 1]; return { domainId: BigInt(l.topics[1]), aggregationId: BigInt(l.topics[2]), root: l.topics[3], block: l.blockNumber }; }
+  }
+  throw new Error('no aggregation found on the verifier in the last 200,000 blocks');
+}
+
+/** Ask the REAL zkVerify verifier on Sepolia whether the forged leaf belongs to its latest real aggregation. */
 export async function replayTool(leaf: Hex): Promise<{ event: ToolEvent }> {
-  // A public read-only node is the default so the replay beat works out of the box; set SEPOLIA_RPC_URL to override,
-  // or to '' to require your own. This only READS a view function (verifyProofAggregation) — never a transaction.
+  // A public read-only node is the default; set SEPOLIA_RPC_URL to override, or to '' to require your own. This only
+  // reads (getLogs + the verifyProofAggregation view), never sends a transaction.
   const env = process.env.SEPOLIA_RPC_URL;
   const RPC = env === '' ? '' : (env ?? 'https://ethereum-sepolia-rpc.publicnode.com');
   if (!RPC) return { event: { tool: 'replay', status: 'setup', summary: 'Setup required: SEPOLIA_RPC_URL to read the zkVerify verifier' } };
   const client = createPublicClient({ chain: sepolia, transport: http(RPC) });
   try {
+    const agg = await latestAggregation(client);
     const ok = await client.readContract({ address: ZKVERIFY, abi, functionName: 'verifyProofAggregation',
-      args: [0n, 999_999_999n, leaf, [], 1n, 0n] });
+      args: [agg.domainId, agg.aggregationId, leaf, [], 1n, 0n] });
     return { event: { tool: 'replay', status: 'ok',
-      summary: ok ? `the verifier ACCEPTED ${leaf.slice(0, 10)}… (unexpected)` : `the verifier rejected the forged leaf ${leaf.slice(0, 10)}… — only a real aggregated receipt passes`,
-      detail: { accepted: ok, verifier: ZKVERIFY } } };
+      summary: ok ? `the verifier ACCEPTED ${leaf.slice(0, 10)}… in aggregation ${agg.aggregationId} (unexpected)`
+        : `zkVerify's verifier says no: the forged leaf ${leaf.slice(0, 10)}… is not in real aggregation #${agg.aggregationId} (domain ${agg.domainId}, block ${agg.block}). zkVerify isn't fooled; only a consumer that trusts the wrong key is.`,
+      detail: { accepted: ok, verifier: ZKVERIFY, domainId: Number(agg.domainId), aggregationId: Number(agg.aggregationId), aggregationRoot: agg.root, block: Number(agg.block), leaf } } };
   } catch (e) {
-    return { event: { tool: 'replay', status: 'error', summary: `fork read failed: ${String(e).slice(0, 160)}` } };
+    return { event: { tool: 'replay', status: 'error', summary: `verifier read failed: ${String(e).slice(0, 160)}` } };
   }
 }
 

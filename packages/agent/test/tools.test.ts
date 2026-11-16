@@ -1,4 +1,5 @@
-// Offline tests for the agent's tools: real scan, real local forgery proof, real patch verification. No API key.
+// Tests for the agent's tools: real scan, real local forgery proof, real zkVerify node (vk_hash), real Sepolia verifier
+// read, real patch verification. No API key needed; the network calls are keyless reads.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { scanTool, forgeTool, patchTool, replayTool, shutdownProver } from '../src/tools.ts';
@@ -14,11 +15,25 @@ test('scan tool returns the critical E1 finding on VulnerableMint', async () => 
   assert.match(event.summary, /critical/);
 });
 
-test('forge tool produces a real, locally-verified Groth16 proof', async () => {
-  const { event } = await forgeTool(0xA11cEn, 1_000_000n);
-  assert.equal(event.status, 'ok');
+let forgedLeaf: `0x${string}`;
+test('forge tool produces a real, locally-verified Groth16 proof and its real zkVerify leaf', async () => {
+  const { event, leaf } = await forgeTool(0xA11cEn, 1_000_000n);
+  assert.equal(event.status, 'ok', event.summary);
   assert.equal((event.detail as any).verifiedLocally, true);
+  assert.match((event.detail as any).attackerVkHash, /^0x[0-9a-f]{64}$/);
+  assert.match(leaf!, /^0x[0-9a-f]{64}$/);
   assert.match(event.summary, /forged a valid proof minting 1000000/);
+  forgedLeaf = leaf!;
+});
+
+test('replay asks the real Sepolia verifier about the forged leaf in a real aggregation: not accepted', async () => {
+  const { event } = await replayTool(forgedLeaf);
+  assert.equal(event.status, 'ok', event.summary);
+  const d = event.detail as any;
+  assert.equal(d.accepted, false);
+  assert.ok(d.aggregationId >= 270047, `aggregation ${d.aggregationId}`);
+  assert.match(d.aggregationRoot, /^0x[0-9a-f]{64}$/);
+  assert.equal(d.leaf, forgedLeaf);
 });
 
 test('patch tool verifies a pinned fix and rejects a cosmetic one', async () => {
