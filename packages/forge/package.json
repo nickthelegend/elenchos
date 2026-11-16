@@ -1,0 +1,18 @@
+{
+  "name": "@elenchos/forge",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "Builds the claim and attacker circuits, generates real Groth16 proofs, computes zkVerify statement hashes, and talks to Kurier",
+  "scripts": {
+    "circuits": "bash scripts/build-circuits.sh",
+    "test": "node --test --experimental-strip-types test/*.test.ts"
+  },
+  "dependencies": {
+    "circomlib": "2.0.5",
+    "circomlibjs": "0.1.7",
+    "snarkjs": "0.7.6",
+    "viem": "2.57.13"
+  }
+}
