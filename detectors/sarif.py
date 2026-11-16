@@ -5,10 +5,13 @@ Usage: python3 sarif.py <path-to-project-or-sol-file> [--out elenchos.sarif]
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import asdict
+from pathlib import Path
 
-from elenchos_scan import Finding, scan
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # find elenchos_scan next to this file, even under python -I
+from elenchos_scan import Finding, scan  # noqa: E402
 
 RULES = {
     "E1": ("VK from caller", "A zkVerify consumer builds the aggregation leaf from a caller-supplied verification key, so a proof of any circuit passes."),
@@ -34,7 +37,7 @@ def sarif(findings: list[Finding], target: str) -> dict:
         "level": LEVEL[f.severity],
         "message": {"text": f"{f.title}. {f.evidence} Fix: {f.fix}"},
         "locations": [{"physicalLocation": {
-            "artifactLocation": {"uri": f.file},
+            "artifactLocation": {"uri": os.path.relpath(f.file).replace(os.sep, "/"), "uriBaseId": "%SRCROOT%"},
             "region": {"startLine": max(f.line, 1)},
         }}],
     } for f in findings]

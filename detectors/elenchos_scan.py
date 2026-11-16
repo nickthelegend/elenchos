@@ -16,6 +16,7 @@ Usage: python3 elenchos_scan.py <path-to-project-or-sol-file> [--json out.json]
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from dataclasses import asdict, dataclass
@@ -56,8 +57,9 @@ def is_library_code(fn: Function) -> bool:
 
 
 def src(node_or_fn) -> tuple[str, int]:
+    """(absolute file path, first line). Printers make it relative to wherever they run (SARIF needs repo-relative)."""
     m = node_or_fn.source_mapping
-    return (m.filename.short if m else "?", (m.lines[0] if m and m.lines else 0))
+    return ((m.filename.absolute or m.filename.short) if m else "?", (m.lines[0] if m and m.lines else 0))
 
 
 def verify_calls(fn: Function):
@@ -172,5 +174,5 @@ if __name__ == "__main__":
         with open(sys.argv[sys.argv.index("--json") + 1], "w") as fh:
             json.dump(payload, fh, indent=2)
     for f in out:
-        print(f"[{f.rule} {f.severity:8}] {f.contract}.{f.function}  {f.file}:{f.line}\n    {f.evidence}\n    fix: {f.fix}")
+        print(f"[{f.rule} {f.severity:8}] {f.contract}.{f.function}  {os.path.relpath(f.file)}:{f.line}\n    {f.evidence}\n    fix: {f.fix}")
     print(f"{len(out)} finding(s)")
