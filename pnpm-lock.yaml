@@ -8,6 +8,25 @@ importers:
 
   .: {}
 
+  packages/arena:
+    dependencies:
+      snarkjs:
+        specifier: 0.7.6
+        version: 0.7.6
+      viem:
+        specifier: 2.57.13
+        version: 2.57.13
+    devDependencies:
+      circomlibjs:
+        specifier: 0.1.7
+        version: 0.1.7
+
+  packages/core:
+    dependencies:
+      viem:
+        specifier: 2.57.13
+        version: 2.57.13
+
   packages/forge:
     dependencies:
       circomlib:
