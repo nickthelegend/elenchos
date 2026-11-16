@@ -59,3 +59,31 @@ test('a patch that does not compile is rejected, loudly', async () => {
   assert.equal(r.verified, false);
   assert.match(r.reason, /does not compile/);
 });
+
+test('a patch that deletes the vulnerable function is rejected even though the scanner is clean', async () => {
+  const path = `${demo}VulnerableMint.sol`;
+  // Compiles, and the scanner finds nothing because `claim` is gone — but the entry point was removed, not fixed.
+  const gutted = `// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+import {IVerifyProofAggregation} from "../interfaces/IVerifyProofAggregation.sol";
+contract VulnerableMint {
+    IVerifyProofAggregation public immutable zkVerify;
+    mapping(address => uint256) public balanceOf;
+    uint256 public totalSupply;
+    constructor(address z) { zkVerify = IVerifyProofAggregation(z); }
+}
+`;
+  const r = await verifyPatch(path, gutted);
+  assert.equal(r.compiles, true, r.reason);
+  assert.equal(r.findingsAfter.length, 0, 'scanner is quiet because the function is gone');
+  assert.equal(r.verified, false, 'but deleting the entry point is not a fix');
+  assert.ok(r.evaded.some((e) => /removed or renamed/.test(e)), r.reason);
+});
+
+test('a patch that rips the receipt check out entirely is rejected', async () => {
+  const path = `${demo}VulnerableMint.sol`;
+  const noProof = readFileSync(path, 'utf8')
+    .replace(/bytes32 leaf = ZkVerifyStatement[\s\S]*?"invalid proof"\s*\);/, '// proof check removed');
+  const r = await verifyPatch(path, noProof);
+  if (r.compiles) { assert.equal(r.verified, false); assert.ok(r.evaded.length > 0 || r.remaining.length > 0, r.reason); }
+});

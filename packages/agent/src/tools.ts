@@ -55,7 +55,7 @@ export async function replayTool(leaf: Hex): Promise<{ event: ToolEvent }> {
 export async function patchTool(path: string, newSource: string): Promise<{ result: PatchResult; event: ToolEvent }> {
   const result = await verifyPatch(path, newSource);
   return { result, event: { tool: 'patch', status: result.verified ? 'ok' : 'error', summary: result.reason, detail: {
-    verified: result.verified, compiles: result.compiles, cleared: result.cleared, remaining: result.remaining.map((f) => `${f.rule} ${f.function}`), patchedSource: newSource } } };
+    verified: result.verified, compiles: result.compiles, cleared: result.cleared, remaining: result.remaining.map((f) => `${f.rule} ${f.function}`), evaded: result.evaded, patchedSource: newSource } } };
 }
 
 export { shutdownProver, poseidon1, proveClaim, groth16Statement };

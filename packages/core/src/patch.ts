@@ -18,8 +18,30 @@ export type PatchResult = {
   findingsAfter: Finding[];
   cleared: string[];      // "rule@line" entries that disappeared
   remaining: Finding[];   // findings still present after the patch
+  evaded: string[];       // ways the patch cheated the scanner instead of fixing the bug
   reason: string;
 };
+
+// Public/external function names a contract exposes. A genuine fix keeps the same entry points; deleting or renaming
+// the vulnerable function makes the scanner go quiet without fixing anything, so we treat that as an evasion.
+const EXTERNAL_FN = /function\s+([A-Za-z_]\w*)\s*\([^)]*\)[^{};]*\b(public|external)\b/g;
+function externalFns(src: string): Set<string> {
+  const out = new Set<string>(); let m: RegExpExecArray | null;
+  const re = new RegExp(EXTERNAL_FN); while ((m = re.exec(src))) out.add(m[1]);
+  return out;
+}
+// Does the code still consume a zkVerify receipt at all? A patch that just rips the proof check out is not a fix.
+const CONSUMES = /verifyProofAggregation/;
+
+/** Ways a "scanner-clean" patch can be a cheat rather than a fix. Empty = no evasion detected. */
+export function evasions(before: string, after: string): string[] {
+  const out: string[] = [];
+  const b = externalFns(before), a = externalFns(after);
+  const dropped = [...b].filter((f) => !a.has(f));
+  if (dropped.length) out.push(`removed or renamed public function(s) the scanner keyed on: ${dropped.join(', ')}`);
+  if (CONSUMES.test(before) && !CONSUMES.test(after)) out.push('the patch no longer verifies any zkVerify receipt — it removed the feature instead of fixing it');
+  return out;
+}
 
 /**
  * @param originalPath absolute path to the target .sol file (inside a Foundry project)
@@ -48,18 +70,22 @@ export async function verifyPatch(originalPath: string, patchedSource: string): 
       buildErr = String((e as { stderr?: string }).stderr ?? e).split('\n').filter((l) => /error|Error/.test(l)).slice(0, 2).join(' ');
     }
     if (!compiles) {
-      return { verified: false, compiles, findingsBefore, findingsAfter: [], cleared: [], remaining: findingsBefore, reason: `patched contract does not compile: ${buildErr}`.slice(0, 300) };
+      return { verified: false, compiles, findingsBefore, findingsAfter: [], cleared: [], remaining: findingsBefore, evaded: [], reason: `patched contract does not compile: ${buildErr}`.slice(0, 300) };
     }
     const findingsAfter = await scan(target);
     const keyOf = (f: Finding) => `${f.rule}@${f.function}`;
     const afterKeys = new Set(findingsAfter.map(keyOf));
     const cleared = findingsBefore.filter((f) => !afterKeys.has(keyOf(f))).map((f) => `${f.rule}@${f.line}`);
-    const verified = findingsAfter.length === 0 && findingsBefore.length > 0;
+    const { readFileSync: rf } = await import('node:fs');
+    const evaded = evasions(rf(originalPath, 'utf8'), patchedSource);
+    const scannerClean = findingsAfter.length === 0 && findingsBefore.length > 0;
+    const verified = scannerClean && evaded.length === 0;
     return {
-      verified, compiles, findingsBefore, findingsAfter, cleared, remaining: findingsAfter,
+      verified, compiles, findingsBefore, findingsAfter, cleared, remaining: findingsAfter, evaded,
       reason: verified
         ? `compiles and the scanner is now clean (cleared ${cleared.join(', ')})`
         : findingsBefore.length === 0 ? 'nothing to fix: the target had no findings'
+        : evaded.length ? `the scanner is clean but the patch cheated: ${evaded.join('; ')}`
         : `still ${findingsAfter.length} finding(s) after the patch: ${findingsAfter.map(keyOf).join(', ')}`,
     };
   } finally {

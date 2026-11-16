@@ -25,8 +25,10 @@ The four holes you look for, and the fix for each:
 
 Work in this order and narrate briefly as you go: scan the target; if there is a critical finding, forge a proof to
 show what the hole lets an attacker mint, and read the real zkVerify verifier to show the forged leaf is rejected on
-its own; then propose a patched version of the file and call the patch tool, which compiles it and re-scans. Only
-claim a fix works after the patch tool verifies it. Never invent a result a tool did not return. Be concise.`;
+its own; then propose a patched version of the file and call the patch tool, which compiles it and re-scans. The patch tool also rejects a fix that only cheats the scanner (deleting
+or renaming the vulnerable function, or ripping the receipt check out) — if it reports the patch cheated, fix it
+properly, do not claim success. Only claim a fix works after the patch tool verifies it. Never invent a result a
+tool did not return. Be concise.`;
 
 type Ctx = { targetPath: string; originalSource: string };
 
