@@ -13,7 +13,7 @@ import { investigate } from './agent.ts';
 import { TARGETS, findTarget, source } from './targets.ts';
 import { badSource, limited, overBudget, withWorkspace } from './workspace.ts';
 import { forgeTool, patchTool, replayTool, scanTool } from './tools.ts';
-import { connectRepo, getProject, summary, withProjectCopy } from './project.ts';
+import { CHAINS, connectAddress, connectRepo, getProject, summary, withProjectCopy } from './project.ts';
 import { runAttack, deniedCheatcode } from './exploit.ts';
 import { forgeryFor } from './tools.ts';
 import { badge, getReport, saveReport, sha256 } from './report.ts';
@@ -97,7 +97,7 @@ async function route(req: any, res: any) {
   if (req.method === 'GET' && url.pathname === '/api/targets') {
     return json(res, 200, { targets: TARGETS.map((t) => ({ id: t.id, title: t.title, language: t.language, blurb: t.blurb, source: source(t) })),
       ready: { anthropic: Boolean(process.env.ANTHROPIC_API_KEY), openai: Boolean(process.env.OPENAI_API_KEY), rpc: true /* built-in public read-only nodes; override with SEPOLIA_RPC_URL */, kurier: Boolean(process.env.KURIER_API_KEY) },
-      model: process.env.ELENCHOS_MODEL ?? 'claude-sonnet-5-5', agentRunsPerHour: Number(process.env.ELENCHOS_INVESTIGATIONS_PER_HOUR ?? 0) || null });
+      chains: Object.entries(CHAINS).map(([id, c]) => ({ id, name: c.name })), model: process.env.ELENCHOS_MODEL ?? 'claude-sonnet-5-5', agentRunsPerHour: Number(process.env.ELENCHOS_INVESTIGATIONS_PER_HOUR ?? 0) || null });
   }
   const rep = /^\/api\/report\/([A-Za-z0-9_-]{8})$/.exec(url.pathname);
   if (req.method === 'GET' && rep) { const r = getReport(rep[1]); return r ? json(res, 200, r) : json(res, 404, { error: 'No report with that id on this server.' }); }
@@ -111,6 +111,12 @@ async function route(req: any, res: any) {
     const started = Date.now();
     const p = await connectRepo(b.url);
     return json(res, 200, { ...summary(p), ms: Date.now() - started });
+  }
+  // Load a deployed contract's verified source (Sourcify, then Blockscout) as a project.
+  if (url.pathname === '/api/address/connect') {
+    const started = Date.now();
+    const p = await connectAddress(b.chain, b.address);
+    return json(res, 200, { ...summary(p), from: p.from, chain: p.chain, address: p.address, explorer: p.explorer, implementation: p.implementation, ms: Date.now() - started });
   }
   // Audit a whole connected project at once.
   if (url.pathname === '/api/project/scan') {
@@ -187,7 +193,7 @@ async function route(req: any, res: any) {
         fix = { source: patched, sha256: sha256(patched), verified: fixVerify.verified, compiles: fixVerify.compiles, reason: fixVerify.reason,
           remaining: fixVerify.remaining.map((f) => `${f.rule} ${f.function}`), evaded: fixVerify.evaded, attack: fixAttack };
       }
-      return saveReport({ title, source: original, sha256: sha256(original), repo: p ? { repo: p.repo, sha: p.sha, path: String(b.path) } : null,
+      return saveReport({ title, source: original, sha256: sha256(original), repo: p ? { repo: p.repo, sha: p.sha, path: String(b.path), explorer: p.explorer ?? null } : null,
         findings, compileError: failed, attack, forgery, fix, engine: 'Slither + the five Elenchos detectors · Foundry exploit test · deterministic fix verifier' });
     });
     return json(res, 200, { id: report.id, ms: Date.now() - started });

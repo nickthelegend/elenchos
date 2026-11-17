@@ -44,7 +44,7 @@ function hunks(d: ReturnType<typeof diff>) {
 function markdown(r: R, link: string): string {
   const h = headline(r);
   const lines = [`# Elenchos report: ${r.title}`, '', `**${h.big}.** ${h.sub}`, '', `- Report: ${link}`, `- Created: ${r.createdAt}`, `- Source sha256: \`${r.sha256}\``];
-  if (r.repo) lines.push(`- Repository: https://github.com/${r.repo.repo} @ \`${r.repo.sha.slice(0, 12)}\`, \`${r.repo.path}\``);
+  if (r.repo) lines.push(r.repo.explorer ? `- Deployed contract: ${r.repo.repo} (${r.repo.explorer}), \`${r.repo.path}\`` : `- Repository: https://github.com/${r.repo.repo} @ \`${r.repo.sha.slice(0, 12)}\`, \`${r.repo.path}\``);
   lines.push(`- Engine: ${r.engine}`, '', '## Findings', '');
   if (!r.findings.length) lines.push('None.');
   else { lines.push('| Rule | Severity | Where | Finding | Fix |', '|---|---|---|---|---|'); for (const f of r.findings) lines.push(`| ${f.rule} | ${f.severity} | \`${f.function.split('(')[0]}\` line ${f.line} | ${f.title} | ${f.fix} |`); }
@@ -105,7 +105,9 @@ export function ReportPage({ id }: { id: string }) {
           <dl className="rp-meta">
             <div><dt>Created</dt><dd>{new Date(r.createdAt).toLocaleString()}</dd></div>
             <div><dt>Source sha256</dt><dd title={r.sha256}>{short(r.sha256)}</dd></div>
-            {r.repo && <div><dt>Repository</dt><dd><a href={`https://github.com/${r.repo.repo}/blob/${r.repo.sha}/${r.repo.path}`} target="_blank" rel="noreferrer">{r.repo.repo}@{r.repo.sha.slice(0, 7)}</a></dd></div>}
+            {r.repo && (r.repo.explorer
+              ? <div><dt>Deployed at</dt><dd><a href={r.repo.explorer} target="_blank" rel="noreferrer">{r.repo.repo}</a></dd></div>
+              : <div><dt>Repository</dt><dd><a href={`https://github.com/${r.repo.repo}/blob/${r.repo.sha}/${r.repo.path}`} target="_blank" rel="noreferrer">{r.repo.repo}@{r.repo.sha.slice(0, 7)}</a></dd></div>)}
             <div><dt>Report id</dt><dd>{r.id}</dd></div>
           </dl>
         </section>

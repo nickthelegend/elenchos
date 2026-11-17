@@ -2,7 +2,7 @@
 export const API_BASE = ((import.meta as any).env?.VITE_ELENCHOS_API ?? '').replace(/\/$/, '');
 export type Turn = { role: 'user' | 'assistant'; text: string };
 export type Ready = { anthropic: boolean; openai: boolean; rpc: boolean; kurier: boolean };
-export type ServerInfo = { targets: Target[]; ready: Ready; model?: string; agentRunsPerHour?: number | null };
+export type ServerInfo = { targets: Target[]; ready: Ready; model?: string; agentRunsPerHour?: number | null; chains?: { id: string; name: string }[] };
 export type Target = { id: string; title: string; language: string; blurb: string; source: string };
 export type ToolEvent = { tool: 'scan' | 'forge' | 'replay' | 'patch' | 'attack'; status: 'running' | 'ok' | 'setup' | 'error'; summary: string; detail?: any };
 export type AgentEvent =
@@ -41,7 +41,7 @@ export type AttackResult = { status: 'exploitable' | 'blocked' | 'error'; summar
 /** Run the exploit test: a real Foundry test on a local EVM with a real forged proof (no model). */
 export const runAttack = (subject: Subject) => post<AttackResult>('/api/attack', subject);
 export type Report = {
-  id: string; createdAt: string; title: string; source: string; sha256: string; repo: { repo: string; sha: string; path: string } | null;
+  id: string; createdAt: string; title: string; source: string; sha256: string; repo: { repo: string; sha: string; path: string; explorer?: string | null } | null;
   findings: Finding[]; compileError: string | null; attack: AttackResult | null; forgery: { vkHash: string; leaf: string; inputs: string[] } | null;
   fix: null | { source: string; sha256: string; verified: boolean; compiles: boolean; reason: string; remaining: string[]; evaded: string[]; attack: AttackResult | null };
   engine: string;
@@ -62,9 +62,11 @@ export const scanFile = (subject: Subject) => post<{ findings: Finding[]; ms: nu
 export const verifyFix = (subject: Subject, original: string, patched: string) => post<{ event: ToolEvent }>('/api/verify', { ...subject, original, patched });
 
 export type ProjectFile = { path: string; source: string };
-export type ProjectInfo = { id: string; repo: string; ref: string | null; sha: string; kind: 'foundry' | 'hardhat' | 'plain'; deps: string; files: ProjectFile[]; expiresAt: number; ms: number };
+export type ProjectInfo = { id: string; repo: string; ref: string | null; sha: string; kind: 'foundry' | 'hardhat' | 'plain'; deps: string; files: ProjectFile[]; expiresAt: number; ms: number; explorer?: string | null; from?: string; implementation?: { address: string; name: string | null } | null };
 /** Clone a public GitHub repository on the server and list its contracts. */
 export const connectProject = (url: string) => post<ProjectInfo>('/api/project/connect', { url });
+/** Load a deployed contract's verified source (Sourcify, then Blockscout) as a project. */
+export const connectDeployed = (chain: string, address: string) => post<ProjectInfo>('/api/address/connect', { chain, address });
 /** Audit every contract of a connected project at once (file paths come back relative to the project). */
 export const scanProject = (projectId: string, edits: Record<string, string>) => post<{ findings: Finding[]; ms: number }>('/api/project/scan', { projectId, edits });
 

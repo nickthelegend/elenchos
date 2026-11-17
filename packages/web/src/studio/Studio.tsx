@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Editor, { DiffEditor, type Monaco } from '@monaco-editor/react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
-import { askZkVerify, runAttack, createReport, getReport, connectProject, fetchGithubFile, forgeExploit, getTargets, investigate, scanFile, scanProject, verifyFix,
+import { askZkVerify, runAttack, createReport, getReport, connectDeployed, connectProject, fetchGithubFile, forgeExploit, getTargets, investigate, scanFile, scanProject, verifyFix,
   type AgentEvent, type Finding, type ProjectInfo, type Ready, type Subject, type ToolEvent, type Turn } from '../api.ts';
 import { Mark } from '../icons.tsx';
 import { defineTheme } from './theme.ts';
@@ -86,13 +86,16 @@ export function Studio() {
   useEffect(() => { if (!connecting) return; const t = setInterval(() => setTick((x) => x + 1), 1000); return () => clearInterval(t); }, [connecting]);
 
   const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [chains, setChains] = useState<{ id: string; name: string }[]>([]);
+  const [deployChain, setDeployChain] = useState('sepolia');
+  const [deployAddr, setDeployAddr] = useState('');
   const load = useCallback(() => {
     setLoading(true); setLoadError(null);
     getTargets().then((d) => {
       const builtins: File[] = d.targets.map((t) => ({ key: `demo/${t.title}`, label: t.title, folder: 'demo', source: t.source, original: t.source, kind: 'builtin', targetId: t.id, blurb: t.blurb }));
       const local = loadLocal();
       setFiles((fs) => [...builtins, ...local, ...fs.filter((f) => f.kind === 'project')]);
-      setReady(d.ready); if (d.model) setModel(d.model); setRunsPerHour(d.agentRunsPerHour ?? null);
+      setReady(d.ready); if (d.chains) setChains(d.chains); if (d.model) setModel(d.model); setRunsPerHour(d.agentRunsPerHour ?? null);
       const first = builtins[0]?.key ?? local[0]?.key ?? null;
       setOpen((o) => (o.length ? o : first ? [first] : []));
       setActive((a) => a ?? first);
@@ -176,19 +179,36 @@ export function Studio() {
       setSection('explorer');
     } catch (e) { setGhError(String((e as Error).message ?? e)); }
   }
+  function addProject(p: ProjectInfo) {
+    const old = projects.filter((x) => x.repo === p.repo).map((x) => x.id);
+    setProjects((ps) => [...ps.filter((x) => x.repo !== p.repo), p]);
+    const pf: File[] = p.files.map((f) => ({ key: `gh/${p.id}/${f.path}`, label: base(f.path), folder: p.repo, source: f.source, original: f.source, kind: 'project', projectId: p.id, rel: f.path }));
+    setFiles((fs) => [...fs.filter((f) => !(f.kind === 'project' && old.includes(f.projectId!))), ...pf]);
+    setSection('explorer');
+    if (pf[0]) openFile(pf[0].key);
+  }
+  async function loadDeployed(addr = deployAddr, chain = deployChain) {
+    if (!addr.trim() || connecting) return;
+    setGhError(null); setConnecting({ url: addr, since: Date.now() });
+    log('cmd', `elenchos fetch --chain ${chain} ${addr.trim()}`);
+    try {
+      const p = await connectDeployed(chain, addr.trim());
+      addProject(p);
+      log('ok', `loaded ${p.repo} · ${p.files.length} contract file${p.files.length === 1 ? '' : 's'} · ${p.deps} · ${(p.ms / 1000).toFixed(1)} s`);
+      if (p.implementation) log('warn', `${addr.trim().slice(0, 10)}… is a proxy. Its logic lives at ${p.implementation.address}${p.implementation.name ? ` (${p.implementation.name})` : ''}: load that address to audit it.`);
+      setDeployAddr('');
+    } catch (e) { const msg = String((e as Error).message ?? e); setGhError(msg); log('err', msg); }
+    finally { setConnecting(null); }
+  }
   async function connect(url = ghUrl) {
     if (!url.trim() || connecting) return;
     setGhError(null); setConnecting({ url, since: Date.now() });
     log('cmd', `elenchos connect ${url.trim()}`);
     try {
       const p = await connectProject(url.trim());
-      const old = projects.filter((x) => x.repo === p.repo).map((x) => x.id);
-      setProjects((ps) => [...ps.filter((x) => x.repo !== p.repo), p]);
-      const pf: File[] = p.files.map((f) => ({ key: `gh/${p.id}/${f.path}`, label: base(f.path), folder: p.repo, source: f.source, original: f.source, kind: 'project', projectId: p.id, rel: f.path }));
-      setFiles((fs) => [...fs.filter((f) => !(f.kind === 'project' && old.includes(f.projectId!))), ...pf]);
+      addProject(p);
       log('ok', `connected ${p.repo} @ ${p.sha.slice(0, 7)} · ${p.kind} · ${p.files.length} contracts · ${p.deps} · ${(p.ms / 1000).toFixed(1)} s`);
-      setGhUrl(''); setSection('explorer');
-      if (pf[0]) openFile(pf[0].key);
+      setGhUrl('');
     } catch (e) { const msg = String((e as Error).message ?? e); setGhError(msg); log('err', msg); }
     finally { setConnecting(null); }
   }
@@ -452,19 +472,19 @@ export function Studio() {
                 : !files.some((f) => f.kind === 'local') && <button className="sd-empty-new" onClick={() => setCreating('')}><i className="codicon codicon-add" />New file, or paste your contract</button>}
             </Folder>
             {projectFolders.map(({ p, tree }) => (
-              <Folder key={p.id} name={p.repo} hint={`${p.sha.slice(0, 7)} · ${p.kind}`} icon="repo" action={<button className="ic" title={`Audit all of ${p.repo}`} aria-label={`Audit all of ${p.repo}`} onClick={() => auditProject(p)} disabled={Boolean(busy)}><i className="codicon codicon-run-all" /></button>}>
+              <Folder key={p.id} name={p.repo} hint={p.explorer ? `deployed · ${p.deps}` : `${p.sha.slice(0, 7)} · ${p.kind}`} icon={p.explorer ? 'globe' : 'repo'} action={<button className="ic" title={`Audit all of ${p.repo}`} aria-label={`Audit all of ${p.repo}`} onClick={() => auditProject(p)} disabled={Boolean(busy)}><i className="codicon codicon-run-all" /></button>}>
                 <Tree node={tree} depth={0} active={active} audits={audits} onOpen={openFile} />
               </Folder>
             ))}
             {!projects.length && <button className="sd-empty-new gh" onClick={() => setSection('github')}><i className="codicon codicon-github" />Connect a GitHub repository</button>}
           </div>
           {file?.blurb && <div className="sd-blurb"><b>{file.label}</b>{file.blurb}</div>}
-          {file?.kind === 'project' && <div className="sd-blurb"><b>{projectOf(file)?.repo}</b>{file.rel} · cloned at {projectOf(file)?.sha.slice(0, 7)}. Edits stay in this browser; audits run on a fresh copy.</div>}
+          {file?.kind === 'project' && <div className="sd-blurb"><b>{projectOf(file)?.repo}</b>{file.rel} · {projectOf(file)?.explorer ? 'verified source of the deployed contract' : `cloned at ${projectOf(file)?.sha.slice(0, 7)}`}. Edits stay in this browser; audits run on a fresh copy.</div>}
         </>
       )}
       {section === 'github' && (
         <>
-          <div className="sd-head"><span>GitHub</span></div>
+          <div className="sd-head"><span>Import</span></div>
           <div className="sd-list">
             <form className="gh-card" onSubmit={(e) => { e.preventDefault(); connect(); }}>
               <b><i className="codicon codicon-repo" />Connect a repository</b>
@@ -480,11 +500,24 @@ export function Studio() {
               <input value={ghFile} onChange={(e) => setGhFile(e.target.value)} placeholder="github.com/owner/repo/blob/main/src/X.sol" aria-label="File URL" />
               <button className="sd-btn" disabled={!ghFile.trim()}><i className="codicon codicon-cloud-download" />Import</button>
             </form>
+            <form className="gh-card" onSubmit={(e) => { e.preventDefault(); loadDeployed(); }}>
+              <b><i className="codicon codicon-globe" />Audit a deployed contract</b>
+              <p>Loads its verified source from Sourcify (or Blockscout) with the exact compiler it was deployed with.</p>
+              <div className="gh-row">
+                <select value={deployChain} onChange={(e) => setDeployChain(e.target.value)} aria-label="Chain" disabled={Boolean(connecting) || !chains.length}>
+                  {chains.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                <input value={deployAddr} onChange={(e) => setDeployAddr(e.target.value)} placeholder="0x… contract address" aria-label="Contract address" disabled={Boolean(connecting)} spellCheck={false} />
+              </div>
+              <button className="sd-btn" disabled={!/^0x[0-9a-fA-F]{40}$/.test(deployAddr.trim()) || Boolean(connecting)}>{connecting && connecting.url === deployAddr ? <><i className="codicon codicon-loading codicon-modifier-spin" />Fetching…</> : <><i className="codicon codicon-cloud-download" />Load contract</>}</button>
+              <div className="gh-try">Try: <button type="button" onClick={() => { setDeployChain('sepolia'); setDeployAddr('0x5a3c35CCC5c05fDeFe5Ecafc15F4B1aC8eF71481'); loadDeployed('0x5a3c35CCC5c05fDeFe5Ecafc15F4B1aC8eF71481', 'sepolia'); }} disabled={Boolean(connecting)}>zkVerify’s aggregation contract (Sepolia)</button></div>
+            </form>
             {ghError && <p className="gh-err" role="alert"><i className="codicon codicon-error" />{ghError}</p>}
             {projects.map((p) => (
               <div key={p.id} className="gh-proj">
-                <div className="hh"><i className="codicon codicon-repo" /><b>{p.repo}</b><em>{p.sha.slice(0, 7)}</em></div>
-                <p>{p.kind} · {p.files.length} contracts · {p.deps} · expires {new Date(p.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                <div className="hh"><i className={`codicon codicon-${p.explorer ? 'globe' : 'repo'}`} /><b>{p.repo}</b>{!p.explorer && <em>{p.sha.slice(0, 7)}</em>}</div>
+                {p.explorer && <a className="gh-link" href={p.explorer} target="_blank" rel="noreferrer"><i className="codicon codicon-link-external" />View on explorer</a>}
+                <p>{p.explorer ? 'deployed' : p.kind} · {p.files.length} contracts · {p.deps} · expires {new Date(p.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
                 <button className="sd-btn sm" onClick={() => auditProject(p)} disabled={Boolean(busy)}><i className="codicon codicon-run-all" />Audit whole project</button>
               </div>
             ))}

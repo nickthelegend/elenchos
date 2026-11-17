@@ -10,7 +10,7 @@ import type { AttackResult, Forgery } from './exploit.ts';
 
 export type Report = {
   id: string; createdAt: string; title: string; source: string; sha256: string;
-  repo: { repo: string; sha: string; path: string } | null;
+  repo: { repo: string; sha: string; path: string; explorer?: string | null } | null;
   findings: Finding[]; compileError: string | null;
   attack: AttackResult | null; forgery: Forgery | null;
   fix: null | { source: string; sha256: string; verified: boolean; compiles: boolean; reason: string; remaining: string[]; evaded: string[]; attack: AttackResult | null };

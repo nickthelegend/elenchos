@@ -369,3 +369,11 @@ kbd { font: 11px var(--mono); padding: 1px 5px; border-radius: 3px; border: 1px 
 .ta li.w .tv { color: var(--s-crit); }
 .ta .tl { grid-column: 2 / -1; font: 11px/1.5 var(--mono); color: var(--s-ink2); white-space: pre-wrap; word-break: break-word; }
 .ta-err { margin: 0 8px 8px; padding: 8px; background: var(--s-side); border-radius: 3px; font: 11px/1.5 var(--mono); color: var(--s-crit); white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; }
+
+/* deployed contract */
+.gh-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.gh-card select { width: 100%; height: 30px; border: 1px solid var(--s-line2); background: var(--s-inp); color: #fff; padding: 0 6px; font: 13px var(--sans); border-radius: 2px; outline: none; }
+.gh-card select:focus { border-color: var(--s-focus); }
+.gh-row input { font-family: var(--mono, monospace); font-size: 12px; }
+.gh-link { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #3794ff; text-decoration: none; margin: 2px 0; }
+.gh-link:hover { text-decoration: underline; }

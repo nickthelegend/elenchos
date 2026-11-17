@@ -18,7 +18,7 @@ const MAX_REPO_MB = 400;
 const SKIP = /(^|\/)(lib|node_modules|out|cache|broadcast|\.git|artifacts|typechain|typechain-types|coverage)(\/|$)/;
 
 export type ProjectFile = { path: string; source: string };
-export type Project = { id: string; repo: string; ref: string | null; sha: string; kind: 'foundry' | 'hardhat' | 'plain'; root: string; dir: string; files: ProjectFile[]; deps: string; createdAt: number };
+export type Project = { id: string; repo: string; ref: string | null; sha: string; kind: 'foundry' | 'hardhat' | 'plain'; root: string; dir: string; files: ProjectFile[]; deps: string; createdAt: number; explorer?: string };
 const projects = new Map<string, Project>();
 
 const run = (cmd: string, args: string[], opts: { cwd?: string; timeout?: number } = {}) => new Promise<{ stdout: string; stderr: string }>((ok, fail) =>
@@ -153,6 +153,86 @@ export async function connectRepo(url: unknown): Promise<Project> {
   return p;
 }
 
+// ---- Deployed contracts: verified source from Sourcify, or from Blockscout when Sourcify doesn't have it. ----
+export const CHAINS: Record<string, { id: number; name: string; blockscout: string | null; explorer: string }> = {
+  ethereum: { id: 1, name: 'Ethereum', blockscout: 'https://eth.blockscout.com', explorer: 'https://etherscan.io/address/' },
+  sepolia: { id: 11155111, name: 'Sepolia', blockscout: 'https://eth-sepolia.blockscout.com', explorer: 'https://sepolia.etherscan.io/address/' },
+  base: { id: 8453, name: 'Base', blockscout: 'https://base.blockscout.com', explorer: 'https://basescan.org/address/' },
+  'base-sepolia': { id: 84532, name: 'Base Sepolia', blockscout: 'https://base-sepolia.blockscout.com', explorer: 'https://sepolia.basescan.org/address/' },
+  arbitrum: { id: 42161, name: 'Arbitrum One', blockscout: 'https://arbitrum.blockscout.com', explorer: 'https://arbiscan.io/address/' },
+  'arbitrum-sepolia': { id: 421614, name: 'Arbitrum Sepolia', blockscout: 'https://arbitrum-sepolia.blockscout.com', explorer: 'https://sepolia.arbiscan.io/address/' },
+  optimism: { id: 10, name: 'OP Mainnet', blockscout: 'https://optimism.blockscout.com', explorer: 'https://optimistic.etherscan.io/address/' },
+  'optimism-sepolia': { id: 11155420, name: 'OP Sepolia', blockscout: 'https://optimism-sepolia.blockscout.com', explorer: 'https://sepolia-optimism.etherscan.io/address/' },
+  polygon: { id: 137, name: 'Polygon', blockscout: 'https://polygon.blockscout.com', explorer: 'https://polygonscan.com/address/' },
+  gnosis: { id: 100, name: 'Gnosis', blockscout: 'https://gnosis.blockscout.com', explorer: 'https://gnosisscan.io/address/' },
+};
+
+type Fetched = { name: string; compiler: string; sources: Record<string, string>; remappings: string[]; evmVersion: string | null; from: 'Sourcify' | 'Blockscout'; implementation: { address: string; name: string | null } | null };
+const getJson = async (url: string) => { const r = await fetch(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(20_000) }); return { status: r.status, body: await r.json().catch(() => null) as any }; };
+
+async function fromSourcify(chainId: number, address: string): Promise<Fetched | null> {
+  const { status, body } = await getJson(`https://sourcify.dev/server/v2/contract/${chainId}/${address}?fields=sources,compilation,proxyResolution`);
+  if (status !== 200 || !body?.sources || !body.compilation) return null;
+  const sources: Record<string, string> = {};
+  for (const [k, v] of Object.entries(body.sources as Record<string, { content: string }>)) sources[k] = v.content;
+  const impl = body.proxyResolution?.implementations?.[0];
+  return { name: body.compilation.name, compiler: body.compilation.compilerVersion, sources, remappings: body.compilation.compilerSettings?.remappings ?? [],
+    evmVersion: body.compilation.compilerSettings?.evmVersion ?? null, from: 'Sourcify', implementation: impl ? { address: impl.address, name: impl.name ?? null } : null };
+}
+async function fromBlockscout(base: string, address: string): Promise<Fetched | null> {
+  const { status, body } = await getJson(`${base}/api/v2/smart-contracts/${address}`);
+  if (status !== 200 || !body?.source_code || body.language && !/solidity/i.test(body.language)) return null;
+  const main = body.file_path || `${body.name ?? 'Contract'}.sol`;
+  const sources: Record<string, string> = { [main]: body.source_code };
+  for (const a of body.additional_sources ?? []) sources[a.file_path] = a.source_code;
+  const impl = body.implementations?.[0];
+  return { name: body.name, compiler: body.compiler_version, sources, remappings: body.compiler_settings?.remappings ?? [],
+    evmVersion: body.evm_version && body.evm_version !== 'default' ? body.evm_version : body.compiler_settings?.evmVersion ?? null, from: 'Blockscout',
+    implementation: impl ? { address: impl.address_hash ?? impl.address, name: impl.name ?? null } : null };
+}
+
+/** Load a deployed contract's verified source as a project (one Foundry project with the exact compiler it used). */
+export async function connectAddress(chain: unknown, address: unknown): Promise<Project & { from: string; chain: string; address: string; explorer: string; implementation: Fetched['implementation'] }> {
+  const c = typeof chain === 'string' ? CHAINS[chain] : undefined;
+  if (!c) throw new Error(`Pick a chain: ${Object.keys(CHAINS).join(', ')}.`);
+  if (typeof address !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(address.trim())) throw new Error('Paste a contract address: 0x followed by 40 hex characters.');
+  const addr = address.trim();
+  const got = (await fromSourcify(c.id, addr).catch(() => null)) ?? (c.blockscout ? await fromBlockscout(c.blockscout, addr).catch(() => null) : null);
+  if (!got) throw new Error(`No verified source for ${addr} on ${c.name}: neither Sourcify nor Blockscout has it. Only verified contracts can be audited by address.`);
+  const version = /(\d+\.\d+\.\d+)/.exec(got.compiler ?? '')?.[1];
+  if (!version) throw new Error(`Unknown compiler version "${got.compiler}" for ${addr}.`);
+  if (Object.keys(got.sources).length > 400) throw new Error('That contract has over 400 source files, the studio\'s limit.');
+  evict();
+  const id = randomBytes(8).toString('hex');
+  const dir = join(ROOT, id); const root = join(dir, 'repo');
+  const { mkdir } = await import('node:fs/promises');
+  for (const [k, v] of Object.entries(got.sources)) {
+    const rel = k.replace(/^\/+/, '').replace(/^[A-Za-z]:\//, '');
+    if (!rel || rel.split('/').includes('..') || typeof v !== 'string') continue;
+    const target = resolve(root, rel);
+    if (!target.startsWith(root + sep)) continue;
+    await mkdir(join(target, '..'), { recursive: true });
+    await writeFile(target, v);
+  }
+  // Every source unit lives at its own name under the root, so the root is the base path and imports resolve as solc saw them.
+  const remaps = got.remappings.filter((r) => typeof r === 'string' && !r.includes('..') && !/=\s*\//.test(r) && /^[^=]+=[^=]*$/.test(r));
+  await writeFile(join(root, 'foundry.toml'), `# Written by Elenchos for ${addr} on ${c.name} (source from ${got.from}).\n[profile.default]\nsrc = "."\nlibs = []\nsolc_version = "${version}"\n${got.evmVersion ? `evm_version = "${got.evmVersion}"\n` : ''}${remaps.length ? `remappings = [${remaps.map((r) => JSON.stringify(r)).join(', ')}]\n` : ''}`);
+  const files: ProjectFile[] = [];
+  const isLib = (p: string) => /^(@|lib\/|node_modules\/|\.deps\/)/.test(p) || /(^|\/)(openzeppelin|forge-std|solmate|solady)(-[\w.-]+)?\//i.test(p);
+  const paths = walk(root, root).map((r) => r.split(sep).join('/')).sort((a, b) => Number(isLib(a)) - Number(isLib(b)) || a.localeCompare(b));
+  for (const rel of paths) {
+    if (files.length >= MAX_FILES) break;
+    if (isLib(rel) && files.length) continue;
+    const p = join(root, rel); if (statSync(p).size > MAX_FILE) continue;
+    files.push({ path: rel, source: readFileSync(p, 'utf8') });
+  }
+  if (!files.length) { await rm(dir, { recursive: true, force: true }); throw new Error(`The verified source of ${addr} has no Solidity files Elenchos can read.`); }
+  const p: Project = { id, repo: `${c.name} · ${got.name ?? 'contract'} ${addr.slice(0, 6)}…${addr.slice(-4)}`, ref: null, sha: addr, kind: 'foundry', root, dir, files,
+    deps: `${Object.keys(got.sources).length} source files from ${got.from}, solc ${version}`, createdAt: Date.now(), explorer: `${c.explorer}${addr}` };
+  projects.set(id, p);
+  return { ...p, from: got.from, chain: c.name, address: addr, explorer: `${c.explorer}${addr}`, implementation: got.implementation };
+}
+
 export const getProject = (id: unknown) => (typeof id === 'string' ? projects.get(id) : undefined);
 
 /** A throwaway copy of a connected project with the editor's edits applied; `fn` gets the copy's root. */
@@ -167,4 +247,4 @@ export async function withProjectCopy<T>(p: Project, edits: Record<string, strin
   } finally { await rm(work, { recursive: true, force: true }); }
 }
 
-export const summary = (p: Project) => ({ id: p.id, repo: p.repo, ref: p.ref, sha: p.sha, kind: p.kind, deps: p.deps, files: p.files, expiresAt: p.createdAt + TTL_MS });
+export const summary = (p: Project) => ({ id: p.id, repo: p.repo, ref: p.ref, sha: p.sha, kind: p.kind, deps: p.deps, files: p.files, explorer: p.explorer ?? null, expiresAt: p.createdAt + TTL_MS });

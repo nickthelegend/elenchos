@@ -44,3 +44,15 @@ test('a checkout without foundry.toml gets a minimal one', () => {
   const dir = mkdtempSync(join(tmpdir(), 'elenchos-toml-'));
   assert.match(safeFoundryToml(dir), /\[profile\.default\][\s\S]*auto_detect_solc = true/);
 });
+
+test('a deployed contract by address: zkVerify\'s Sepolia aggregation contract loads from Sourcify with its compiler', { timeout: 60_000 }, async (t) => {
+  const { connectAddress } = await import('../src/project.ts');
+  let p;
+  try { p = await connectAddress('sepolia', '0x5a3c35CCC5c05fDeFe5Ecafc15F4B1aC8eF71481'); }
+  catch (e) { if (/fetch failed|ENOTFOUND|timeout/i.test(String(e))) return t.skip(`network unavailable: ${e}`); throw e; }
+  assert.equal(p.from, 'Sourcify');
+  assert.ok(p.files.some((f) => f.path === 'contracts/ZkVerifyAggregation.sol'));
+  assert.match(p.deps, /solc 0\.8\.20/);
+  await assert.rejects(connectAddress('sepolia', '0x1234'), /40 hex/);
+  await assert.rejects(connectAddress('nowhere', '0x5a3c35CCC5c05fDeFe5Ecafc15F4B1aC8eF71481'), /Pick a chain/);
+});
