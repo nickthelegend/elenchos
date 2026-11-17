@@ -381,3 +381,9 @@ kbd { font: 11px var(--mono); padding: 1px 5px; border-radius: 3px; border: 1px 
 .t-tool.a-exploitable .st { color: var(--s-crit); }
 .t-tool.a-exploitable .verb { color: var(--s-crit); }
 .t-tool.a-blocked .verb { color: var(--s-ok); }
+.sd-btn .short { display: none; }
+.sd-narrow .sd-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: visible; position: relative; }
+.sd-narrow .sd-actions .sd-btn { justify-content: center; padding: 0 6px; min-width: 0; }
+.sd-narrow .sd-actions .lbl { display: none; }
+.sd-narrow .sd-actions .short { display: inline; }
+.sd-narrow .sd-actions .sd-busy { position: absolute; right: 0; top: -34px; }

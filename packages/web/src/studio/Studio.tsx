@@ -413,11 +413,12 @@ export function Studio() {
     <header className="sd-toolbar">
       <a className="sd-brand" href="#/" aria-label="Elenchos home"><Mark size={22} /><span>Elenchos</span><em>Studio</em></a>
       <div className="sd-actions">
-        <button className="sd-btn primary" onClick={() => runScan()} disabled={actionsDisabled} title="Slither + the five Elenchos detectors. No model."><i className={`codicon codicon-${busy === 'scan' ? 'loading codicon-modifier-spin' : 'play'}`} /><span>Run audit</span></button>
-        <button className="sd-btn" onClick={() => step('forge')} disabled={actionsDisabled} title="A real Groth16 proof from an attacker circuit, with its zkVerify leaf. No model."><i className="codicon codicon-key" /><span>Forge exploit</span></button>
+        <button className="sd-btn primary" onClick={() => runScan()} disabled={actionsDisabled} title="Slither + the five Elenchos detectors. No model."><i className={`codicon codicon-${busy === 'scan' ? 'loading codicon-modifier-spin' : 'play'}`} /><span className="lbl">Run audit</span><span className="short">Audit</span></button>
+        <button className="sd-btn" onClick={() => step('forge')} disabled={actionsDisabled} title="A real Groth16 proof from an attacker circuit, with its zkVerify leaf. No model."><i className="codicon codicon-key" /><span className="lbl">Forge exploit</span><span className="short">Forge</span></button>
         <button className="sd-btn hide-md" onClick={() => step('replay')} disabled={actionsDisabled} title="Reads zkVerify's real verifier on Sepolia for the forged leaf. No model."><i className="codicon codicon-type-hierarchy" /><span>Ask zkVerify</span></button>
-        <button className="sd-btn" onClick={() => step('attack')} disabled={actionsDisabled} title="Runs a real Foundry exploit test against this file on a local EVM, with a real forged proof. No model."><i className="codicon codicon-debug-alt" /><span>Run exploit test</span></button>
+        <button className="sd-btn" onClick={() => step('attack')} disabled={actionsDisabled} title="Runs a real Foundry exploit test against this file on a local EVM, with a real forged proof. No model."><i className="codicon codicon-debug-alt" /><span className="lbl">Run exploit test</span><span className="short">Exploit</span></button>
         <button className="sd-btn hide-md" onClick={() => step('verify')} disabled={actionsDisabled} title="Compiles your edited file, re-scans it and rejects fixes that cheat. No model."><i className="codicon codicon-tools" /><span>Verify fix</span></button>
+        {narrow && <button className="sd-btn" onClick={share} disabled={actionsDisabled}><i className="codicon codicon-export" /><span className="short">Share</span></button>}
         {busy && <span className="sd-busy"><span className="pulse" />{busy === 'scan' ? 'Scanning…' : busy === 'tool' ? 'Running…' : 'Agent working…'}</span>}
       </div>
       <div className="sd-right">
