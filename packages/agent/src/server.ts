@@ -17,6 +17,7 @@ import { CHAINS, connectAddress, connectRepo, getProject, summary, withProjectCo
 import { runAttack, deniedCheatcode } from './exploit.ts';
 import { forgeryFor } from './tools.ts';
 import { badge, getReport, saveReport, sha256 } from './report.ts';
+import { handleMcp } from './mcp.ts';
 import { writeFile } from 'node:fs/promises';
 import { scan as coreScan, bySeverity } from '@elenchos/core/src/scan.ts';
 
@@ -93,11 +94,21 @@ const server = createServer((req, res) => {
 
 async function route(req: any, res: any) {
   const url = new URL(req.url ?? '/', 'http://localhost');
-  if (req.method === 'OPTIONS') { res.writeHead(204, { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type', 'access-control-max-age': '86400' }); res.end(); return; }
+  if (req.method === 'OPTIONS') { res.writeHead(204, { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type, mcp-protocol-version, mcp-session-id, authorization', 'access-control-max-age': '86400' }); res.end(); return; }
   if (req.method === 'GET' && url.pathname === '/api/targets') {
     return json(res, 200, { targets: TARGETS.map((t) => ({ id: t.id, title: t.title, language: t.language, blurb: t.blurb, source: source(t) })),
       ready: { anthropic: Boolean(process.env.ANTHROPIC_API_KEY), openai: Boolean(process.env.OPENAI_API_KEY), rpc: true /* built-in public read-only nodes; override with SEPOLIA_RPC_URL */, kurier: Boolean(process.env.KURIER_API_KEY) },
       chains: Object.entries(CHAINS).map(([id, c]) => ({ id, name: c.name })), model: process.env.ELENCHOS_MODEL ?? 'claude-sonnet-5-5', agentRunsPerHour: Number(process.env.ELENCHOS_INVESTIGATIONS_PER_HOUR ?? 0) || null });
+  }
+  // MCP (Streamable HTTP, stateless): POST JSON-RPC, get JSON back. There is no server-to-client stream, so GET is 405.
+  if (url.pathname === '/mcp') {
+    if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST', 'access-control-allow-origin': '*' }); res.end(); return; }
+    let msg: unknown;
+    try { msg = JSON.parse(await readBody(req)); } catch (e) { if (e instanceof TooLarge) throw e; return json(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }); }
+    const ip = String(req.headers['x-forwarded-for'] ?? req.socket.remoteAddress ?? '').split(',')[0].trim();
+    const out = await handleMcp(msg, PORT, ip);
+    if (out === null) { res.writeHead(202, { 'access-control-allow-origin': '*' }); res.end(); return; }
+    return json(res, 200, out);
   }
   const rep = /^\/api\/report\/([A-Za-z0-9_-]{8})$/.exec(url.pathname);
   if (req.method === 'GET' && rep) { const r = getReport(rep[1]); return r ? json(res, 200, r) : json(res, 404, { error: 'No report with that id on this server.' }); }

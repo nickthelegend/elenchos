@@ -24,6 +24,7 @@ services:
       ELENCHOS_INVESTIGATIONS_PER_HOUR: "5"
       # Shareable reports live outside the container so they survive rebuilds.
       ELENCHOS_DATA: /data
+      ELENCHOS_PUBLIC_API: https://elenchos.201-18-198-162.sslip.io
     volumes:
       - /opt/hk/elenchos/data:/data
     networks: [coolify]
