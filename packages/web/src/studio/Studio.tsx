@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Editor, { DiffEditor, type Monaco } from '@monaco-editor/react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
-import { askZkVerify, runAttack, connectProject, fetchGithubFile, forgeExploit, getTargets, investigate, scanFile, scanProject, verifyFix,
+import { askZkVerify, runAttack, createReport, getReport, connectProject, fetchGithubFile, forgeExploit, getTargets, investigate, scanFile, scanProject, verifyFix,
   type AgentEvent, type Finding, type ProjectInfo, type Ready, type Subject, type ToolEvent, type Turn } from '../api.ts';
 import { Mark } from '../icons.tsx';
 import { defineTheme } from './theme.ts';
@@ -85,6 +85,7 @@ export function Studio() {
   }, []);
   useEffect(() => { if (!connecting) return; const t = setInterval(() => setTick((x) => x + 1), 1000); return () => clearInterval(t); }, [connecting]);
 
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
   const load = useCallback(() => {
     setLoading(true); setLoadError(null);
     getTargets().then((d) => {
@@ -98,6 +99,14 @@ export function Studio() {
     }).catch((e) => setLoadError(String(e?.message ?? e))).finally(() => setLoading(false));
   }, []);
   useEffect(load, [load]);
+  // #/app?report=<id>: open a shared report's source as a file of yours.
+  useEffect(() => {
+    if (loading || loadError) return;
+    const id = /[?&]report=([A-Za-z0-9_-]{8})/.exec(window.location.hash)?.[1];
+    if (!id) return;
+    window.history.replaceState(null, '', '#/app');
+    getReport(id).then((r) => { const name = base(r.title).replace(/[^A-Za-z0-9_.]/g, '_'); if (addLocal(name, r.source, `report ${id}`)) log('ok', `opened ${name} from report ${id}`); }, (e) => log('err', `report ${id}: ${String(e.message ?? e)}`));
+  }, [loading, loadError]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const file = files.find((f) => f.key === active) ?? null;
   const audit: Audit = (active && audits[active]) || { entries: [] };
@@ -273,6 +282,31 @@ export function Studio() {
     finally { setBusy(null); setRunning(null); }
   }
 
+  // Share: the server re-runs the scan, the exploit test and the fix check on this source, stores the result and
+  // returns a link. The browser sends only source code.
+  async function share() {
+    if (!file || busy) return;
+    const f = file; const a = audits[f.key];
+    const patchedApplied = Boolean(a?.patch?.detail?.verified && a.patch.detail.patchedSource === f.source);
+    let subject: Subject; let patched: string | null = null;
+    if (f.kind === 'project') { const e = editsFor(f.projectId!); delete e[f.rel!]; subject = { projectId: f.projectId!, path: f.rel!, edits: e }; if (f.source !== f.original) patched = f.source; }
+    else if (f.kind === 'builtin' && f.targetId) { subject = { targetId: f.targetId }; if (f.source !== f.original) patched = f.source; }
+    else if (patchedApplied && f.original !== f.source) { subject = { name: f.label, source: f.original }; patched = f.source; }
+    else subject = { name: f.label, source: f.source };
+    const custom = a?.attack?.detail && a.attack.detail.template === null && a.attack.detail.testSource ? a.attack.detail.testSource as string : null;
+    setBusy('tool'); setBottomTab('terminal');
+    log('cmd', `elenchos report ${f.label}${patched ? ' --with-fix' : ''}  (the server re-runs scan, exploit test${patched ? ' and fix check' : ''})`);
+    try {
+      const r = await createReport(subject, patched, custom);
+      const url = `${window.location.origin}${window.location.pathname}#/r/${r.id}`;
+      log('ok', `report ready in ${r.ms} ms: ${url}`);
+      push(f.key, { kind: 'agent', text: `**Report ready.** [Open the shareable report](${url}): findings, the exploit test${patched ? ' on the original and on your fix' : ''}, a README badge, and Markdown or SARIF export.`, done: true });
+      setShareUrl(url);
+      try { await navigator.clipboard.writeText(url); log('dim', 'link copied to the clipboard'); } catch { /* clipboard unavailable */ }
+    } catch (e) { const msg = String((e as Error).message ?? e); log('err', msg); push(f.key, { kind: 'error', text: msg }); }
+    finally { setBusy(null); }
+  }
+
   function history(a: Audit): Turn[] {
     const turns: Turn[] = [];
     const add = (role: Turn['role'], text: string) => { const l = turns[turns.length - 1]; if (l?.role === role) l.text += `\n${text}`; else turns.push({ role, text }); };
@@ -367,6 +401,8 @@ export function Studio() {
         {busy && <span className="sd-busy"><span className="pulse" />{busy === 'scan' ? 'Scanning…' : busy === 'tool' ? 'Running…' : 'Agent working…'}</span>}
       </div>
       <div className="sd-right">
+        {shareUrl && <a className="sd-link hide-md" href={shareUrl} target="_blank" rel="noreferrer"><i className="codicon codicon-link-external" />Open report</a>}
+        <button className="sd-btn" onClick={share} disabled={actionsDisabled} title="The server re-runs the audit, the exploit test and your fix, and gives you a link with a README badge."><i className="codicon codicon-export" /><span>Share report</span></button>
         <button className="sd-link hide-md" onClick={() => { setSection('github'); setShowSide(true); if (narrow) setMpane('files'); }}><i className="codicon codicon-github" />Connect repo</button>
         <a className="sd-link hide-md" href={REPO} target="_blank" rel="noreferrer"><i className="codicon codicon-link-external" />Source</a>
         {!narrow && <button className={`ic${showChat ? ' on' : ''}`} aria-label="Toggle chat" title="Toggle chat" onClick={() => setShowChat(!showChat)}><i className="codicon codicon-layout-sidebar-right" /></button>}

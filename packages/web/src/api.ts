@@ -1,5 +1,5 @@
 // The studio talks to the Elenchos server on the same origin by default; VITE_ELENCHOS_API points it elsewhere.
-const API_BASE = ((import.meta as any).env?.VITE_ELENCHOS_API ?? '').replace(/\/$/, '');
+export const API_BASE = ((import.meta as any).env?.VITE_ELENCHOS_API ?? '').replace(/\/$/, '');
 export type Turn = { role: 'user' | 'assistant'; text: string };
 export type Ready = { anthropic: boolean; openai: boolean; rpc: boolean; kurier: boolean };
 export type ServerInfo = { targets: Target[]; ready: Ready; model?: string; agentRunsPerHour?: number | null };
@@ -40,6 +40,22 @@ export type AttackTest = { name: string; worked: boolean; reason: string | null;
 export type AttackResult = { status: 'exploitable' | 'blocked' | 'error'; summary: string; template: string | null; contract: string | null; tests: AttackTest[]; ms: number; compileError?: string; testSource: string; forgery?: { vkHash: string; leaf: string; inputs: string[] } };
 /** Run the exploit test: a real Foundry test on a local EVM with a real forged proof (no model). */
 export const runAttack = (subject: Subject) => post<AttackResult>('/api/attack', subject);
+export type Report = {
+  id: string; createdAt: string; title: string; source: string; sha256: string; repo: { repo: string; sha: string; path: string } | null;
+  findings: Finding[]; compileError: string | null; attack: AttackResult | null; forgery: { vkHash: string; leaf: string; inputs: string[] } | null;
+  fix: null | { source: string; sha256: string; verified: boolean; compiles: boolean; reason: string; remaining: string[]; evaded: string[]; attack: AttackResult | null };
+  engine: string;
+};
+/** Ask the server to build a shareable report (it re-runs scan, exploit test and fix verification itself). */
+export const createReport = (subject: Subject, patched: string | null, test: string | null) =>
+  post<{ id: string; ms: number }>('/api/report', { ...subject, ...(patched ? { patched } : {}), ...(test ? { test } : {}) });
+export async function getReport(id: string): Promise<Report> {
+  let r: Response;
+  try { r = await fetch(`${API_BASE}/api/report/${encodeURIComponent(id)}`); } catch { throw new Error(UNREACHABLE); }
+  const out = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(out.error ?? `The server answered ${r.status}.`);
+  return out as Report;
+}
 /** Deterministic audit of one file: Slither + the five Elenchos detectors, no model. */
 export const scanFile = (subject: Subject) => post<{ findings: Finding[]; ms: number }>('/api/scan', subject);
 /** Compile + re-scan + anti-cheat of an edited file against its original. */

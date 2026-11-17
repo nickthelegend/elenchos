@@ -16,6 +16,8 @@ import { forgeTool, patchTool, replayTool, scanTool } from './tools.ts';
 import { connectRepo, getProject, summary, withProjectCopy } from './project.ts';
 import { runAttack, deniedCheatcode } from './exploit.ts';
 import { forgeryFor } from './tools.ts';
+import { badge, getReport, saveReport, sha256 } from './report.ts';
+import { writeFile } from 'node:fs/promises';
 import { scan as coreScan, bySeverity } from '@elenchos/core/src/scan.ts';
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -97,6 +99,10 @@ async function route(req: any, res: any) {
       ready: { anthropic: Boolean(process.env.ANTHROPIC_API_KEY), openai: Boolean(process.env.OPENAI_API_KEY), rpc: true /* built-in public read-only nodes; override with SEPOLIA_RPC_URL */, kurier: Boolean(process.env.KURIER_API_KEY) },
       model: process.env.ELENCHOS_MODEL ?? 'claude-sonnet-5-5', agentRunsPerHour: Number(process.env.ELENCHOS_INVESTIGATIONS_PER_HOUR ?? 0) || null });
   }
+  const rep = /^\/api\/report\/([A-Za-z0-9_-]{8})$/.exec(url.pathname);
+  if (req.method === 'GET' && rep) { const r = getReport(rep[1]); return r ? json(res, 200, r) : json(res, 404, { error: 'No report with that id on this server.' }); }
+  const bdg = /^\/api\/badge\/([A-Za-z0-9_-]{8})\.svg$/.exec(url.pathname);
+  if (req.method === 'GET' && bdg) { res.writeHead(200, { 'content-type': 'image/svg+xml', 'cache-control': 'max-age=300', 'access-control-allow-origin': '*' }); res.end(badge(getReport(bdg[1]))); return; }
   if (req.method !== 'POST' || !url.pathname.startsWith('/api/')) return serveStatic(req, res, url);
   const b = await body(req);
 
@@ -152,6 +158,39 @@ async function route(req: any, res: any) {
       : b;
     const r = await withSubject(subj, (path, original) => runAttack(foundryRootOf(path), path, original, forgery, (b.test as string) ?? null));
     return json(res, 200, { ...r, forgery });
+  }
+  // A shareable report. The server produces every result in it: scan, exploit test, and (with a fix) verification
+  // plus the same exploit test against the fix. The browser only sends the source.
+  if (url.pathname === '/api/report') {
+    for (const k of ['patched', 'test'] as const) if (b[k] !== undefined && (typeof b[k] !== 'string' || (b[k] as string).length > 64 * 1024)) throw new BadRequest(`${k} must be Solidity source of at most 64 KB`);
+    if (typeof b.test === 'string') { const d = deniedCheatcode(b.test); if (d) throw new BadRequest(`Refused: the exploit test calls vm.${d}(), which reaches outside the EVM.`); }
+    const ip = String(req.headers['x-forwarded-for'] ?? req.socket.remoteAddress ?? '').split(',')[0].trim();
+    if (overBudget(`report:${ip}`, 30)) return json(res, 429, { error: 'This server makes at most 30 reports an hour per visitor.' });
+    const forgery = await forgeryFor();
+    const subj = typeof b.targetId === 'string' && b.projectId === undefined && b.source === undefined
+      ? (() => { const t = findTarget(b.targetId as string); if (!t) throw new BadRequest('unknown target'); return { name: t.title, source: source(t) }; })()
+      : b;
+    const p = typeof b.projectId === 'string' ? getProject(b.projectId) : null;
+    const patched = typeof b.patched === 'string' ? b.patched : null;
+    const test = typeof b.test === 'string' ? b.test : null;
+    const started = Date.now();
+    const report = await withSubject(subj, async (path, original, title) => {
+      let findings: Awaited<ReturnType<typeof scanTool>>['findings'] = []; let failed: string | null = null;
+      try { findings = (await scanTool(path)).findings; } catch (e) { failed = (await compileError(path)) ?? String((e as Error).message ?? e); }
+      let fix = null;
+      const fixVerify = patched && patched !== original ? (await patchTool(path, patched)).result : null;
+      const root = foundryRootOf(path);
+      const attack = failed ? null : await runAttack(root, path, original, forgery, test);
+      if (fixVerify && patched) {
+        await writeFile(path, patched);
+        const fixAttack = fixVerify.compiles ? await runAttack(root, path, patched, forgery, test) : null;
+        fix = { source: patched, sha256: sha256(patched), verified: fixVerify.verified, compiles: fixVerify.compiles, reason: fixVerify.reason,
+          remaining: fixVerify.remaining.map((f) => `${f.rule} ${f.function}`), evaded: fixVerify.evaded, attack: fixAttack };
+      }
+      return saveReport({ title, source: original, sha256: sha256(original), repo: p ? { repo: p.repo, sha: p.sha, path: String(b.path) } : null,
+        findings, compileError: failed, attack, forgery, fix, engine: 'Slither + the five Elenchos detectors · Foundry exploit test · deterministic fix verifier' });
+    });
+    return json(res, 200, { id: report.id, ms: Date.now() - started });
   }
   if (url.pathname === '/api/investigate') {
     const { prompt, history = [] } = b as { prompt?: unknown; history?: unknown };
