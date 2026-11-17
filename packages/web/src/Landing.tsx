@@ -127,8 +127,11 @@ function StudioShowcase() {
         </a>
         <div className="show-points">
           <div><b>Run audit</b><span>Slither and five detectors on any pasted contract, in about half a second. No model, no key.</span></div>
-          <div><b>Ask the agent</b><span>It scans, forges a real Groth16 exploit, asks zkVerify on Sepolia and verifies its own fix.</span></div>
+          <div><b>Run exploit test</b><span>A real Foundry test with a real forged proof: does the attacker get paid? Run it again on the fix and watch it revert.</span></div>
+          <div><b>Ask the agent</b><span>It scans, forges a real Groth16 exploit, asks zkVerify on Sepolia, writes the fix and proves it holds.</span></div>
           <div><b>Apply the fix</b><span>Only a patch that compiles, scans clean and keeps the receipt check is marked verified.</span></div>
+          <div><b>Share the report</b><span>The server re-runs everything and gives you a link, a README badge, and Markdown or SARIF export.</span></div>
+          <div><b>Bring any contract</b><span>Paste it, connect a GitHub repo, or load a deployed contract by address on ten chains.</span></div>
         </div>
       </div>
     </section>
@@ -340,9 +343,9 @@ function colour(l: string) {
 
 function Numbers() {
   const n = [
-    ['40', 'tests passing', 'real proofs, node and verifier'],
+    ['60', 'tests passing', 'real proofs, EVM, node and verifier'],
     ['5', 'holes detected', 'E1 · E1b · E3 · E4 · E6'],
-    ['132 ms', 'to forge and verify', 'a Groth16 attacker proof'],
+    ['1,000,000', 'minted by the exploit test', 'on VulnerableMint; reverted on the fix'],
     ['#270047', 'real aggregation checked', 'on zkVerify’s Sepolia verifier'],
   ];
   return (
@@ -395,6 +398,8 @@ function Arena() {
 function RunIt() {
   const [copied, setCopied] = useState(false);
   const cmd = 'git clone https://github.com/nickthelegend/elenchos && cd elenchos && docker build -t elenchos . && docker run -p 8787:8787 -e ANTHROPIC_API_KEY elenchos';
+  const mcp = 'claude mcp add --transport http elenchos https://elenchos.201-18-198-162.sslip.io/mcp';
+  const [mcpCopied, setMcpCopied] = useState(false);
   return (
     <section className="sec">
       <div className="l-wrap">
@@ -407,6 +412,11 @@ function RunIt() {
             <div className="cmd">
               <code>{cmd}</code>
               <button className="btn ghost sm" onClick={() => { navigator.clipboard?.writeText(cmd).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1600); }).catch(() => {}); }}>{copied ? 'Copied' : 'Copy'}</button>
+            </div>
+            <p>Or audit from your own agent: Elenchos is an MCP server with eight tools for Claude Code, Cursor and any MCP client.</p>
+            <div className="cmd">
+              <code>{mcp}</code>
+              <button className="btn ghost sm" onClick={() => { navigator.clipboard?.writeText(mcp).then(() => { setMcpCopied(true); setTimeout(() => setMcpCopied(false), 1600); }).catch(() => {}); }}>{mcpCopied ? 'Copied' : 'Copy'}</button>
             </div>
             <div className="hero-cta">
               <a className="btn primary" href="#/app">Open the studio <Arrow /></a>

@@ -377,3 +377,7 @@ kbd { font: 11px var(--mono); padding: 1px 5px; border-radius: 3px; border: 1px 
 .gh-row input { font-family: var(--mono, monospace); font-size: 12px; }
 .gh-link { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #3794ff; text-decoration: none; margin: 2px 0; }
 .gh-link:hover { text-decoration: underline; }
+.t-tool.a-exploitable { border-color: rgba(241, 76, 76, .45); }
+.t-tool.a-exploitable .st { color: var(--s-crit); }
+.t-tool.a-exploitable .verb { color: var(--s-crit); }
+.t-tool.a-blocked .verb { color: var(--s-ok); }

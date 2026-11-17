@@ -135,7 +135,8 @@ function Turn({ e, running, onOpenDiff, onApply, canApply }: { e: Entry; running
 function ToolRow({ ev, direct, onOpenDiff, onApply, canApply }: { ev: ToolEvent; direct?: boolean; onOpenDiff: () => void; onApply: () => void; canApply: boolean }) {
   const [open, setOpen] = useState(false);
   const t = TOOL[ev.tool] ?? { icon: 'symbol-event', name: ev.tool };
-  const icon = ev.status === 'running' ? 'loading codicon-modifier-spin' : ev.status === 'ok' ? 'pass-filled' : ev.status === 'error' ? 'error' : 'warning';
+  const exploited = ev.tool === 'attack' && ev.status === 'ok' && (ev.detail as AttackResult | undefined)?.status === 'exploitable';
+  const icon = exploited ? 'bug' : ev.status === 'running' ? 'loading codicon-modifier-spin' : ev.status === 'ok' ? 'pass-filled' : ev.status === 'error' ? 'error' : 'warning';
   const verb = ev.tool === 'attack' && ev.status === 'ok' ? (ev.detail?.status === 'exploitable' ? 'attack worked' : 'attack blocked') : ev.status === 'ok' ? (ev.tool === 'patch' ? 'verified' : 'done') : ev.status === 'error' ? (ev.tool === 'patch' ? 'rejected' : 'failed') : ev.status === 'setup' ? 'setup required' : 'running';
   const d = ev.detail && typeof ev.detail === 'object' ? ev.detail : null;
   const rows = ev.tool === 'attack' ? [] : Array.isArray(d)
