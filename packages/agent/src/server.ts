@@ -14,6 +14,8 @@ import { TARGETS, findTarget, source } from './targets.ts';
 import { badSource, limited, overBudget, withWorkspace } from './workspace.ts';
 import { forgeTool, patchTool, replayTool, scanTool } from './tools.ts';
 import { connectRepo, getProject, summary, withProjectCopy } from './project.ts';
+import { runAttack, deniedCheatcode } from './exploit.ts';
+import { forgeryFor } from './tools.ts';
 import { scan as coreScan, bySeverity } from '@elenchos/core/src/scan.ts';
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -139,6 +141,17 @@ async function route(req: any, res: any) {
     if (typeof b.patched !== 'string' || !b.patched.trim()) throw new BadRequest('patched must be the full edited source');
     const r = await withSubject(b, (path) => patchTool(path, b.patched as string), { originalKey: 'original' });
     return json(res, 200, { event: r.event });
+  }
+  // Run the attack: a real Foundry exploit test on a local EVM, with a real forged proof (see exploit.ts).
+  if (url.pathname === '/api/attack') {
+    if (b.test !== undefined && (typeof b.test !== 'string' || b.test.length > 64 * 1024)) throw new BadRequest('test must be Solidity source of at most 64 KB');
+    if (typeof b.test === 'string') { const d = deniedCheatcode(b.test); if (d) throw new BadRequest(`Refused: the exploit test calls vm.${d}(), which reaches outside the EVM.`); }
+    const forgery = await forgeryFor();
+    const subj = typeof b.targetId === 'string' && b.projectId === undefined && b.source === undefined
+      ? (() => { const t = findTarget(b.targetId as string); if (!t) throw new BadRequest('unknown target'); return { name: t.title, source: source(t) }; })()
+      : b;
+    const r = await withSubject(subj, (path, original) => runAttack(foundryRootOf(path), path, original, forgery, (b.test as string) ?? null));
+    return json(res, 200, { ...r, forgery });
   }
   if (url.pathname === '/api/investigate') {
     const { prompt, history = [] } = b as { prompt?: unknown; history?: unknown };

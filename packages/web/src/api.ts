@@ -4,7 +4,7 @@ export type Turn = { role: 'user' | 'assistant'; text: string };
 export type Ready = { anthropic: boolean; openai: boolean; rpc: boolean; kurier: boolean };
 export type ServerInfo = { targets: Target[]; ready: Ready; model?: string; agentRunsPerHour?: number | null };
 export type Target = { id: string; title: string; language: string; blurb: string; source: string };
-export type ToolEvent = { tool: 'scan' | 'forge' | 'replay' | 'patch'; status: 'running' | 'ok' | 'setup' | 'error'; summary: string; detail?: any };
+export type ToolEvent = { tool: 'scan' | 'forge' | 'replay' | 'patch' | 'attack'; status: 'running' | 'ok' | 'setup' | 'error'; summary: string; detail?: any };
 export type AgentEvent =
   | { type: 'text'; text: string }
   | { type: 'tool'; event: ToolEvent }
@@ -36,6 +36,10 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 /** The pipeline steps without the model. */
 export const forgeExploit = () => post<{ event: ToolEvent; leaf: string | null }>('/api/forge', {});
 export const askZkVerify = (leaf: string) => post<{ event: ToolEvent }>('/api/replay', { leaf });
+export type AttackTest = { name: string; worked: boolean; reason: string | null; logs: string[]; gas: number | null };
+export type AttackResult = { status: 'exploitable' | 'blocked' | 'error'; summary: string; template: string | null; contract: string | null; tests: AttackTest[]; ms: number; compileError?: string; testSource: string; forgery?: { vkHash: string; leaf: string; inputs: string[] } };
+/** Run the exploit test: a real Foundry test on a local EVM with a real forged proof (no model). */
+export const runAttack = (subject: Subject) => post<AttackResult>('/api/attack', subject);
 /** Deterministic audit of one file: Slither + the five Elenchos detectors, no model. */
 export const scanFile = (subject: Subject) => post<{ findings: Finding[]; ms: number }>('/api/scan', subject);
 /** Compile + re-scan + anti-cheat of an edited file against its original. */

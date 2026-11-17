@@ -356,3 +356,16 @@ kbd { font: 11px var(--mono); padding: 1px 5px; border-radius: 3px; border: 1px 
 .sd-narrow .sd-file, .sd-narrow .fo.sub, .sd-narrow .sd-folder .fo { min-height: 40px; height: 40px; }
 @media (max-width: 1180px) { .hide-md { display: none !important; } }
 @media (max-width: 640px) { .hide-sm { display: none !important; } }
+
+/* exploit test results */
+.ta { list-style: none; margin: 0 8px 8px; padding: 0; display: grid; gap: 3px; }
+.ta li { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 3px; background: var(--s-side); font-size: 12px; }
+.ta li.w { box-shadow: inset 2px 0 0 var(--s-crit); }
+.ta li.b { box-shadow: inset 2px 0 0 var(--s-ok); }
+.ta li.w > .codicon { color: var(--s-crit); }
+.ta li.b > .codicon { color: var(--s-ok); }
+.ta .tn { color: var(--s-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ta .tv { font: 11px var(--mono); color: var(--s-ink3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+.ta li.w .tv { color: var(--s-crit); }
+.ta .tl { grid-column: 2 / -1; font: 11px/1.5 var(--mono); color: var(--s-ink2); white-space: pre-wrap; word-break: break-word; }
+.ta-err { margin: 0 8px 8px; padding: 8px; background: var(--s-side); border-radius: 3px; font: 11px/1.5 var(--mono); color: var(--s-crit); white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; }

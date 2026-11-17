@@ -1,7 +1,7 @@
 // The agent chat, modelled on VS Code's chat view: a thread per file, tool calls as collapsible rows, fenced code with
 // copy, a verified-fix card with Open diff / Apply, and a composer with the file as context and slash commands.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ToolEvent } from '../api.ts';
+import type { AttackResult, ToolEvent } from '../api.ts';
 import { Markdown } from '../markdown.tsx';
 import { Mark } from '../icons.tsx';
 
@@ -17,6 +17,7 @@ export const COMMANDS: Command[] = [
   { cmd: '/audit', icon: 'search', label: 'Run audit', desc: 'Slither and the five detectors on this file', model: false },
   { cmd: '/forge', icon: 'key', label: 'Forge exploit', desc: 'A real Groth16 proof from an attacker circuit', model: false },
   { cmd: '/zkverify', icon: 'type-hierarchy', label: 'Ask zkVerify', desc: 'Read the real verifier on Sepolia', model: false },
+  { cmd: '/attack', icon: 'debug-alt', label: 'Run exploit test', desc: 'A real Foundry exploit test on a local EVM: does the attacker get paid?', model: false },
   { cmd: '/verify', icon: 'tools', label: 'Verify my edit', desc: 'Compile, re-scan and anti-cheat your edited file', model: false },
   { cmd: '/investigate', icon: 'sparkle', label: 'Investigate', desc: 'The agent finds, proves and fixes every hole', model: true },
   { cmd: '/fix', icon: 'lightbulb', label: 'Fix it', desc: 'The agent writes the smallest fix and verifies it', model: true },
@@ -24,7 +25,7 @@ export const COMMANDS: Command[] = [
 ];
 const TOOL: Record<string, { icon: string; name: string }> = {
   scan: { icon: 'search', name: 'Scan' }, forge: { icon: 'key', name: 'Forge exploit' },
-  replay: { icon: 'type-hierarchy', name: 'Ask zkVerify' }, patch: { icon: 'tools', name: 'Verify fix' },
+  replay: { icon: 'type-hierarchy', name: 'Ask zkVerify' }, patch: { icon: 'tools', name: 'Verify fix' }, attack: { icon: 'debug-alt', name: 'Exploit test' },
 };
 
 type Props = {
@@ -135,20 +136,21 @@ function ToolRow({ ev, direct, onOpenDiff, onApply, canApply }: { ev: ToolEvent;
   const [open, setOpen] = useState(false);
   const t = TOOL[ev.tool] ?? { icon: 'symbol-event', name: ev.tool };
   const icon = ev.status === 'running' ? 'loading codicon-modifier-spin' : ev.status === 'ok' ? 'pass-filled' : ev.status === 'error' ? 'error' : 'warning';
-  const verb = ev.status === 'ok' ? (ev.tool === 'patch' ? 'verified' : 'done') : ev.status === 'error' ? (ev.tool === 'patch' ? 'rejected' : 'failed') : ev.status === 'setup' ? 'setup required' : 'running';
+  const verb = ev.tool === 'attack' && ev.status === 'ok' ? (ev.detail?.status === 'exploitable' ? 'attack worked' : 'attack blocked') : ev.status === 'ok' ? (ev.tool === 'patch' ? 'verified' : 'done') : ev.status === 'error' ? (ev.tool === 'patch' ? 'rejected' : 'failed') : ev.status === 'setup' ? 'setup required' : 'running';
   const d = ev.detail && typeof ev.detail === 'object' ? ev.detail : null;
-  const rows = Array.isArray(d)
+  const rows = ev.tool === 'attack' ? [] : Array.isArray(d)
     ? (d as { rule: string; severity: string; line: number; title: string }[]).map((f) => [`${f.rule} · line ${f.line}`, `${f.severity}: ${f.title}`])
     : d ? Object.entries(d).filter(([k, v]) => k !== 'patchedSource' && k !== 'publicSignals' && (typeof v !== 'object' || Array.isArray(v)))
       .map(([k, v]) => [k, Array.isArray(v) ? (v.length ? v.join(', ') : 'none') : String(v)]) : [];
   const isFix = ev.tool === 'patch' && d && 'patchedSource' in d;
   return (
-    <div className={`t-tool s-${ev.status}`}>
+    <div className={`t-tool s-${ev.status}${ev.tool === 'attack' && d ? ` a-${(d as AttackResult).status}` : ''}`}>
       <button className="tr" onClick={() => setOpen(!open)} aria-expanded={open}>
         <i className={`codicon codicon-${icon} st`} /><i className={`codicon codicon-${t.icon}`} /><b>{t.name}</b><span className="verb">{verb}</span>
         {direct && <span className="tag">no model</span>}<span className="grow" /><i className={`codicon codicon-chevron-${open ? 'down' : 'right'}`} />
       </button>
       <p className="ts">{ev.summary}</p>
+      {ev.tool === 'attack' && d && <AttackTests r={d as AttackResult} open={open} />}
       {open && rows.length > 0 && <dl className="tkv">{rows.slice(0, 12).map(([k, v], i) => <div key={i}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>}
       {isFix && (
         <div className="tfix">
@@ -157,5 +159,22 @@ function ToolRow({ ev, direct, onOpenDiff, onApply, canApply }: { ev: ToolEvent;
         </div>
       )}
     </div>
+  );
+}
+
+/** Each test of an exploit run: worked (the attacker got paid) or blocked (with the revert reason), plus its logs. */
+export function AttackTests({ r, open }: { r: AttackResult; open: boolean }) {
+  if (r.compileError) return <pre className="ta-err">{r.compileError}</pre>;
+  return (
+    <ul className="ta">
+      {r.tests.filter((t) => t.name.startsWith('test_attack')).map((t) => (
+        <li key={t.name} className={t.worked ? 'w' : 'b'}>
+          <i className={`codicon codicon-${t.worked ? 'error' : 'shield'}`} />
+          <span className="tn">{t.name.replace('test_attack_', '').replace(/_/g, ' ')}</span>
+          <span className="tv">{t.worked ? 'worked' : `blocked · ${t.reason}`}</span>
+          {open && t.logs.length > 0 && <code className="tl">{t.logs.join('\n')}</code>}
+        </li>
+      ))}
+    </ul>
   );
 }

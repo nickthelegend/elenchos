@@ -90,4 +90,12 @@ export async function patchTool(path: string, newSource: string): Promise<{ resu
     verified: result.verified, compiles: result.compiles, cleared: result.cleared, remaining: result.remaining.map((f) => `${f.rule} ${f.function}`), evaded: result.evaded, patchedSource: newSource } } };
 }
 
+/** A fresh real forgery for an exploit test: the attacker circuit's proof, its zkVerify vk hash and leaf. */
+export async function forgeryFor(recipient = 0xA11cEn, amount = 1_000_000n) {
+  const r = await forgeTool(recipient, amount);
+  const d = r.event.detail as { attackerVkHash?: string; leaf?: string; publicSignals?: string[] } | undefined;
+  if (!r.leaf || !d?.attackerVkHash || !d.publicSignals) throw new Error(`could not build the forged receipt for the attack: ${r.event.summary}`);
+  return { vkHash: d.attackerVkHash, leaf: r.leaf as string, inputs: d.publicSignals.map(String) };
+}
+
 export { shutdownProver, poseidon1, proveClaim, groth16Statement };

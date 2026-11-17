@@ -4,6 +4,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { scanTool, forgeTool, replayTool, patchTool, shutdownProver, type ToolEvent } from './tools.ts';
 import { reviewPatch } from './review.ts';
+import { attackCopy } from './exploit.ts';
+import { forgeryFor } from './tools.ts';
 
 export type AgentEvent =
   | { type: 'text'; text: string }
@@ -30,17 +32,21 @@ The five holes you look for, and the fix for each:
 
 Work in this order and narrate briefly as you go: scan the target; if there is a critical finding, forge a proof to
 show what the hole lets an attacker mint, then replay that forged leaf against the real zkVerify verifier on Sepolia to
-show zkVerify itself is not fooled (the bug is the consumer trusting the caller's key); then propose a patched version of the file and call the patch tool, which compiles it and re-scans. The patch tool also rejects a fix that only cheats the scanner (deleting
+show zkVerify itself is not fooled (the bug is the consumer trusting the caller's key); then run the attack tool on
+the original file, which runs a real Foundry exploit test on a local EVM and shows the attacker's balance; then propose a patched version of the file and call the patch tool, which compiles it and re-scans. The patch tool also rejects a fix that only cheats the scanner (deleting
 or renaming the vulnerable function, or ripping the receipt check out) — if it reports the patch cheated, fix it
-properly, do not claim success. Only claim a fix works after the patch tool verifies it. Never invent a result a
+properly, do not claim success. After a verified patch, run the attack tool again with against="patched" to show the
+same attack now reverts. If the attack tool has no stock test for the contract's shape, write one yourself (testSource,
+following the convention in the tool description). Only claim a fix works after the patch tool verifies it. Never invent a result a
 tool did not return. Be concise.`;
 
-type Ctx = { targetPath: string; originalSource: string; forgedLeaf?: `0x${string}` };
+type Ctx = { targetPath: string; originalSource: string; forgedLeaf?: `0x${string}`; patched?: string };
 
 const toolDefs: Anthropic.Tool[] = [
   { name: 'scan', description: 'Run the Elenchos static scanner on the target contract. Returns E1/E1b/E3/E4/E6 findings.', input_schema: { type: 'object', properties: {}, additionalProperties: false } },
   { name: 'forge', description: 'Prove, locally and for real, a Groth16 forgery that mints an amount to a recipient using an attacker circuit — shows what an E1 hole lets through.', input_schema: { type: 'object', properties: { recipient: { type: 'string', description: 'hex address or decimal' }, amount: { type: 'string', description: 'token amount to forge, e.g. 1000000' } }, required: ['amount'], additionalProperties: false } },
   { name: 'replay', description: 'Ask the real zkVerify verifier on Ethereum Sepolia whether the leaf from the last forge call is in its latest real aggregation. Takes no input: it always replays exactly the leaf forge produced. Call forge first.', input_schema: { type: 'object', properties: {}, additionalProperties: false } },
+  { name: 'attack', description: 'Run the attack: a real Foundry exploit test against the target on a local EVM, with a real forged Groth16 receipt (zkVerify is a stand-in that vouches only for leaves really aggregated). Without testSource it uses Elenchos\'s stock test for known claim shapes. To write your own, give a full Solidity file that imports {Test, console} from "forge-std/Test.sol", {ElenchosForgery as F, ElenchosStatement, ZkVerifyStandIn} from "./ElenchosHarness.sol" (F.VK_HASH, F.LEAF, F.inputs(), F.attacker(), F.AMOUNT, F.NULLIFIER; ZkVerifyStandIn has aggregate(bytes32 leaf) and verifyProofAggregation), and the target contract from "TARGET"; defines contract ElenchosExploit is Test; and has test_attack_* functions that each ASSERT the attacker got value. Passing = the attack works; failing = the code stopped it. Cheatcodes that reach outside the EVM (env, files, ffi, forks) are refused.', input_schema: { type: 'object', properties: { against: { type: 'string', enum: ['original', 'patched'], description: 'original file (default) or your last patch' }, testSource: { type: 'string', description: 'optional custom exploit test' } }, additionalProperties: false } },
   { name: 'patch', description: 'Verify a proposed fix: supply the FULL new source for the target file. It is compiled on a throwaway copy and re-scanned; it is verified only if it compiles and the scanner is clean.', input_schema: { type: 'object', properties: { newSource: { type: 'string', description: 'the complete patched Solidity source for the target file' } }, required: ['newSource'], additionalProperties: false } },
 ];
 
@@ -51,7 +57,15 @@ async function runTool(name: string, input: any, ctx: Ctx, emit: (e: AgentEvent)
     if (!ctx.forgedLeaf) return 'No forged leaf yet: call forge first (replay only checks a leaf that forge really produced).';
     const r = await replayTool(ctx.forgedLeaf); emit({ type: 'tool', event: r.event }); return r.event.summary;
   }
+  if (name === 'attack') {
+    const src = input.against === 'patched' ? ctx.patched : ctx.originalSource;
+    if (!src) return 'No patch yet: call patch first, then attack with against="patched".';
+    const r = await attackCopy(ctx.targetPath, src, await forgeryFor(), input.testSource ?? null);
+    emit({ type: 'tool', event: { tool: 'attack', status: r.status === 'error' ? 'error' : 'ok', summary: r.summary, detail: { ...r, against: input.against ?? 'original' } } });
+    return JSON.stringify({ status: r.status, summary: r.summary, tests: r.tests, compileError: r.compileError });
+  }
   if (name === 'patch') {
+    ctx.patched = input.newSource;
     const r = await patchTool(ctx.targetPath, input.newSource); emit({ type: 'tool', event: r.event });
     const review = await reviewPatch(ctx.originalSource, input.newSource, r.result); emit({ type: 'review', status: review.status, text: review.text });
     return JSON.stringify({ verified: r.result.verified, reason: r.result.reason, secondOpinion: review.text });

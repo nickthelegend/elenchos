@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Editor, { DiffEditor, type Monaco } from '@monaco-editor/react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
-import { askZkVerify, connectProject, fetchGithubFile, forgeExploit, getTargets, investigate, scanFile, scanProject, verifyFix,
+import { askZkVerify, runAttack, connectProject, fetchGithubFile, forgeExploit, getTargets, investigate, scanFile, scanProject, verifyFix,
   type AgentEvent, type Finding, type ProjectInfo, type Ready, type Subject, type ToolEvent, type Turn } from '../api.ts';
 import { Mark } from '../icons.tsx';
 import { defineTheme } from './theme.ts';
@@ -15,7 +15,7 @@ import { AuditPanel, type Verdict } from './AuditPanel.tsx';
 
 type File = { key: string; label: string; folder: string; source: string; original: string; kind: 'builtin' | 'local' | 'project'; targetId?: string; projectId?: string; rel?: string; blurb?: string; from?: string };
 type Line = { t: number; kind: 'cmd' | 'out' | 'ok' | 'err' | 'warn' | 'dim'; text: string };
-type Audit = { findings?: Finding[]; scannedSource?: string; ms?: number; error?: string; entries: Entry[]; patch?: ToolEvent; forge?: ToolEvent; replay?: ToolEvent; leaf?: string };
+type Audit = { findings?: Finding[]; scannedSource?: string; ms?: number; error?: string; entries: Entry[]; patch?: ToolEvent; forge?: ToolEvent; replay?: ToolEvent; attack?: ToolEvent; leaf?: string };
 type Section = 'explorer' | 'github' | 'holes' | 'connections';
 type Busy = null | 'scan' | 'agent' | 'tool';
 
@@ -28,7 +28,7 @@ const READY_HINT: Record<keyof Ready, string> = {
   rpc: 'Reads zkVerify’s verifier on Sepolia through public nodes.',
   kurier: 'Submits proofs to zkVerify for the fork tests. Needs KURIER_API_KEY.',
 };
-const TOOL_NAME: Record<string, string> = { scan: 'Scan', forge: 'Forge exploit', replay: 'Ask zkVerify', patch: 'Verify fix' };
+const TOOL_NAME: Record<string, string> = { scan: 'Scan', forge: 'Forge exploit', replay: 'Ask zkVerify', patch: 'Verify fix', attack: 'Exploit test' };
 const SEV = { critical: 0, high: 1, medium: 2 } as const;
 const AGENT_PROMPT: Record<string, string> = {
   '/investigate': 'Find every hole, prove the impact, then propose and verify a fix.',
@@ -225,15 +225,27 @@ export function Studio() {
   }
 
   // A pipeline step run directly (no model): the result lands in the terminal, the chat thread and the audit panel.
-  async function step(kind: 'forge' | 'replay' | 'verify', fromChat = false) {
+  async function step(kind: 'forge' | 'replay' | 'verify' | 'attack', fromChat = false) {
     if (!file || busy) return;
     const f = file; setBusy('tool'); setBottomTab('terminal');
-    if (fromChat) push(f.key, { kind: 'user', text: kind === 'forge' ? '/forge' : kind === 'replay' ? '/zkverify' : '/verify' });
+    if (fromChat) push(f.key, { kind: 'user', text: kind === 'forge' ? '/forge' : kind === 'replay' ? '/zkverify' : kind === 'attack' ? '/attack' : '/verify' });
     const record = (t: ToolEvent, extra: Partial<Audit> = {}) => {
       log(t.status === 'ok' ? 'ok' : t.status === 'error' ? 'err' : 'warn', `› ${TOOL_NAME[t.tool] ?? t.tool}: ${t.summary}`);
       patchAudit(f.key, (a) => ({ ...a, ...extra, entries: [...a.entries, { kind: 'tool', event: t, direct: true }] }));
     };
     try {
+      if (kind === 'attack') {
+        setRunning('attack'); log('cmd', `elenchos attack ${f.label}  (forge test on a local EVM, real forged proof)`);
+        const r = await runAttack(subjectOf(f));
+        for (const t of r.tests) {
+          log(t.worked ? 'err' : 'ok', `${t.worked ? '[ATTACK WORKED] ' : '[BLOCKED]       '}${t.name}${t.reason ? `  · ${t.reason}` : ''}${t.gas ? `  (gas ${t.gas})` : ''}`);
+          for (const l of t.logs) log('dim', `    ${l}`);
+        }
+        if (r.compileError) log('err', r.compileError);
+        const ev: ToolEvent = { tool: 'attack', status: r.status === 'error' ? 'error' : 'ok', summary: `${r.summary} · ${r.ms} ms`, detail: r };
+        record(ev, { attack: ev });
+        return;
+      }
       if (kind === 'forge' || (kind === 'replay' && !audits[f.key]?.leaf)) {
         setRunning('forge'); log('cmd', 'elenchos forge --attacker-circuit --mint 1000000');
         const r = await forgeExploit();
@@ -300,6 +312,7 @@ export function Studio() {
           ...(t.tool === 'patch' && t.detail?.patchedSource ? { patch: t } : {}),
           ...(t.tool === 'forge' ? { forge: t, leaf: t.detail?.leaf ?? a.leaf } : {}),
           ...(t.tool === 'replay' ? { replay: t } : {}),
+          ...(t.tool === 'attack' ? { attack: t } : {}),
         }));
       } else if (ev.type === 'review') push(f.key, { kind: 'review', status: ev.status, text: ev.text });
       else if (ev.type === 'error') { buf = ''; log('err', ev.message); push(f.key, { kind: 'error', text: ev.message }); }
@@ -311,6 +324,7 @@ export function Studio() {
     if (c.cmd === '/forge') return step('forge', true);
     if (c.cmd === '/zkverify') return step('replay', true);
     if (c.cmd === '/verify') return step('verify', true);
+    if (c.cmd === '/attack') return step('attack', true);
     ask(AGENT_PROMPT[c.cmd], c.cmd);
   }
   function stop() { if (!abortRef.current) return; abortRef.current(); log('warn', 'stopped by you'); }
@@ -327,13 +341,14 @@ export function Studio() {
     : audit.patch ? { cls: 'vuln', icon: 'error', big: 'Fix rejected', sub: audit.patch.summary }
     : audit.error ? { cls: 'warn', icon: 'warning', big: 'Audit failed', sub: audit.error }
     : stale ? { cls: 'pending', icon: 'history', big: 'Edited since the audit', sub: 'Run the audit again to refresh the findings.' }
+    : audit.attack?.detail?.status === 'exploitable' && audit.attack.detail.testSource && !stale ? { cls: 'vuln', icon: 'error', big: 'Exploit proven', sub: 'The exploit test paid the attacker on a local EVM, with a real forged proof.' }
     : findings.some((f) => f.severity === 'critical') ? { cls: 'vuln', icon: 'error', big: 'Exploitable', sub: 'A critical hole lets an attacker’s proof through.' }
     : findings.length ? { cls: 'warn', icon: 'warning', big: `${findings.length} to fix`, sub: 'No critical hole, but these need a fix.' }
     : audit.findings ? { cls: 'safe', icon: 'pass-filled', big: 'No holes found', sub: 'None of E1, E1b, E3, E4, E6.' }
     : { cls: 'pending', icon: 'circle-large', big: 'Not audited yet', sub: 'Run audit, type /audit in the chat, or ask Elenchos.' };
-  const steps = ['scan', 'forge', 'replay', 'patch'].map((t) => {
+  const steps = ['scan', 'forge', 'replay', 'attack', 'patch'].map((t) => {
     const ev = [...audit.entries].reverse().find((e) => e.kind === 'tool' && e.event.tool === t) as { event: ToolEvent } | undefined;
-    return { t, st: t === 'scan' && audit.findings ? 'ok' as const : t === 'patch' && audit.patch ? audit.patch.status : t === 'forge' && audit.forge ? audit.forge.status : t === 'replay' && audit.replay ? audit.replay.status : ev?.event.status };
+    return { t, st: t === 'scan' && audit.findings ? 'ok' as const : t === 'patch' && audit.patch ? audit.patch.status : t === 'forge' && audit.forge ? audit.forge.status : t === 'replay' && audit.replay ? audit.replay.status : t === 'attack' && audit.attack ? audit.attack.status : ev?.event.status };
   });
 
   if (loadError) return <Offline message={loadError} onRetry={load} />;
@@ -347,6 +362,7 @@ export function Studio() {
         <button className="sd-btn primary" onClick={() => runScan()} disabled={actionsDisabled} title="Slither + the five Elenchos detectors. No model."><i className={`codicon codicon-${busy === 'scan' ? 'loading codicon-modifier-spin' : 'play'}`} /><span>Run audit</span></button>
         <button className="sd-btn" onClick={() => step('forge')} disabled={actionsDisabled} title="A real Groth16 proof from an attacker circuit, with its zkVerify leaf. No model."><i className="codicon codicon-key" /><span>Forge exploit</span></button>
         <button className="sd-btn hide-md" onClick={() => step('replay')} disabled={actionsDisabled} title="Reads zkVerify's real verifier on Sepolia for the forged leaf. No model."><i className="codicon codicon-type-hierarchy" /><span>Ask zkVerify</span></button>
+        <button className="sd-btn" onClick={() => step('attack')} disabled={actionsDisabled} title="Runs a real Foundry exploit test against this file on a local EVM, with a real forged proof. No model."><i className="codicon codicon-debug-alt" /><span>Run exploit test</span></button>
         <button className="sd-btn hide-md" onClick={() => step('verify')} disabled={actionsDisabled} title="Compiles your edited file, re-scans it and rejects fixes that cheat. No model."><i className="codicon codicon-tools" /><span>Verify fix</span></button>
         {busy && <span className="sd-busy"><span className="pulse" />{busy === 'scan' ? 'Scanning…' : busy === 'tool' ? 'Running…' : 'Agent working…'}</span>}
       </div>
@@ -551,7 +567,7 @@ export function Studio() {
     </div>
   );
 
-  const auditPanel = <AuditPanel fileName={file?.label ?? null} verdict={verdict} steps={steps} findings={findings} stale={stale} ms={audit.ms} forge={audit.forge} replay={audit.replay} running={running} onReveal={(f) => active && reveal(active, f.line)} />;
+  const auditPanel = <AuditPanel fileName={file?.label ?? null} verdict={verdict} steps={steps} findings={findings} stale={stale} ms={audit.ms} forge={audit.forge} replay={audit.replay} attack={audit.attack} running={running} onReveal={(f) => active && reveal(active, f.line)} />;
   const chat = (
     <Chat fileName={file?.label ?? null} entries={audit.entries} busy={busy} ready={Boolean(ready?.anthropic)} model={model} runsPerHour={runsPerHour}
       findingCount={audit.findings && !stale ? findings.length : null} onSend={(t) => ask(t)} onCommand={command} onStop={stop}
