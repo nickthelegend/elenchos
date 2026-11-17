@@ -2,7 +2,7 @@
 // zkVerify verifier on a fork, verify a patch by compiling and re-scanning. Nothing here fabricates a result; a
 // tool that cannot run (missing RPC, missing Kurier key) returns a "Setup required" status, never a fake success.
 import { readFileSync } from 'node:fs';
-import { createPublicClient, http, parseAbi, type Hex } from 'viem';
+import { createPublicClient, fallback, http, parseAbi, type Hex } from 'viem';
 import { sepolia } from 'viem/chains';
 import { scan as coreScan, bySeverity, type Finding } from '@elenchos/core/src/scan.ts';
 import { verifyPatch, type PatchResult } from '@elenchos/core/src/patch.ts';
@@ -64,10 +64,12 @@ async function latestAggregation(client: ReturnType<typeof createPublicClient>) 
 export async function replayTool(leaf: Hex): Promise<{ event: ToolEvent }> {
   // A public read-only node is the default; set SEPOLIA_RPC_URL to override, or to '' to require your own. This only
   // reads (getLogs + the verifyProofAggregation view), never sends a transaction.
+  // Some public backends prune old logs ("pruned history unavailable"), so without SEPOLIA_RPC_URL the read falls back
+  // across three public nodes that serve history.
   const env = process.env.SEPOLIA_RPC_URL;
-  const RPC = env === '' ? '' : (env ?? 'https://ethereum-sepolia-rpc.publicnode.com');
-  if (!RPC) return { event: { tool: 'replay', status: 'setup', summary: 'Setup required: SEPOLIA_RPC_URL to read the zkVerify verifier' } };
-  const client = createPublicClient({ chain: sepolia, transport: http(RPC) });
+  if (env === '') return { event: { tool: 'replay', status: 'setup', summary: 'Setup required: SEPOLIA_RPC_URL to read the zkVerify verifier' } };
+  const RPCS = env ? [env] : ['https://ethereum-sepolia-rpc.publicnode.com', 'https://sepolia.gateway.tenderly.co', 'https://0xrpc.io/sep'];
+  const client = createPublicClient({ chain: sepolia, transport: fallback(RPCS.map((u) => http(u, { retryCount: 1 }))) });
   try {
     const agg = await latestAggregation(client);
     const ok = await client.readContract({ address: ZKVERIFY, abi, functionName: 'verifyProofAggregation',
