@@ -8,6 +8,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { cp, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve, sep } from 'node:path';
+import { recoverDeps } from './deps.ts';
 
 const ROOT = join(tmpdir(), 'elenchos-projects');
 const TTL_MS = 2 * 60 * 60 * 1000;
@@ -72,7 +73,11 @@ const DROP = /^\s*(ffi|fs_permissions|solc|solc_version|solc_path|build_info_pat
 export function safeFoundryToml(root: string): string {
   const file = join(root, 'foundry.toml');
   if (!existsSync(file)) {
-    const src = existsSync(join(root, 'src')) ? 'src' : existsSync(join(root, 'contracts')) ? 'contracts' : '.';
+    // The folder that actually holds the Solidity (a Next.js app also has a src/, with no contracts in it).
+    const hasSol = (d: string) => existsSync(join(root, d)) && walk(join(root, d), join(root, d)).length > 0;
+    const hh = ['hardhat.config.ts', 'hardhat.config.js', 'hardhat.config.cjs'].map((f) => join(root, f)).find(existsSync);
+    const hhSources = hh ? /sources\s*:\s*["'`]\.?\/?([\w./-]+)["'`]/.exec(readFileSync(hh, 'utf8'))?.[1] : undefined;
+    const src = hhSources && hasSol(hhSources) ? hhSources : hasSol('contracts') && !hasSol('src') ? 'contracts' : hasSol('src') ? 'src' : hasSol('contracts') ? 'contracts' : '.';
     const libs = ['lib', 'node_modules'].filter((l) => existsSync(join(root, l)));
     return `# Written by Elenchos: this checkout has no foundry.toml.\n[profile.default]\nsrc = "${src}"\nlibs = [${(libs.length ? libs : ['lib']).map((l) => `"${l}"`).join(', ')}]\nauto_detect_solc = true\n`;
   }
@@ -139,6 +144,9 @@ export async function connectRepo(url: unknown): Promise<Project> {
       catch { deps = 'npm install failed: remapped imports may not resolve'; }
     }
   }
+  // Libraries the repo imports but doesn't contain (gitignored lib/, missing package.json entries).
+  const recovered = await recoverDeps(root).catch((e) => [`dependency recovery failed: ${String((e as Error).message ?? e).slice(0, 120)}`]);
+  if (recovered.length) deps = `${deps === 'none needed' ? '' : `${deps}; `}fetched ${recovered.join('; ')}`;
   await writeFile(join(root, 'foundry.toml'), safeFoundryToml(root));
   const files: ProjectFile[] = [];
   for (const rel of walk(root, root).sort()) {

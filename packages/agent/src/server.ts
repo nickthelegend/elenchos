@@ -6,7 +6,7 @@
 //   {name, source}                      a pasted file, audited in a throwaway copy of the repo's Foundry project
 //   {projectId, path, edits?}           a file of a connected GitHub project, audited in a throwaway copy of it
 import { createServer } from 'node:http';
-import { readFileSync, existsSync, realpathSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { investigate } from './agent.ts';
@@ -82,6 +82,15 @@ async function withSubject<T>(b: Record<string, unknown>, fn: (path: string, ori
   return withWorkspace(b.name as string, src as string, (path) => fn(path, src as string, b.name as string));
 }
 
+function enableViaIr(root: string): boolean {
+  const toml = join(root, 'foundry.toml');
+  if (!existsSync(toml)) return false;
+  const t = readFileSync(toml, 'utf8');
+  if (/^\s*via_ir\s*=\s*true/m.test(t)) return false;
+  writeFileSync(toml, /\[profile\.default\]/.test(t) ? t.replace(/\[profile\.default\]/, '[profile.default]\nvia_ir = true') : `${t}\n[profile.default]\nvia_ir = true\n`);
+  return true;
+}
+
 const server = createServer((req, res) => {
   route(req, res).catch((e) => {
     if (e instanceof TooLarge) return json(res, 413, { error: `request body over ${MAX_BODY / 1024} KB` });
@@ -134,10 +143,17 @@ async function route(req: any, res: any) {
     const p = getProject(b.projectId); if (!p) throw new BadRequest('That project expired (projects are kept for two hours). Connect it again.');
     const edits = (b.edits && typeof b.edits === 'object' ? b.edits : {}) as Record<string, string>;
     const started = Date.now();
-    const findings = await limited(() => withProjectCopy(p, edits, async (root) => {
+    const once = () => limited(() => withProjectCopy(p, edits, async (root) => {
       try { const real = realpathSync(root); return bySeverity(await coreScan(root)).map((f) => ({ ...f, file: relative(real, realpathSync(f.file)).split(sep).join('/') })); }
       catch (e) { throw new Error((await compileError(join(root, 'foundry.toml'))) ?? String((e as Error).message ?? e)); }
     }));
+    let findings;
+    try { findings = await once(); }
+    catch (e) {
+      // "Stack too deep": the repo needs the IR pipeline (its own config often sets it per profile). Retry once with it.
+      if (!/Stack too deep/i.test(String((e as Error).message)) || !enableViaIr(p.root)) throw e;
+      findings = await once();
+    }
     return json(res, 200, { findings, ms: Date.now() - started });
   }
   // Deterministic audit of one file: Slither + the five Elenchos detectors. No model involved.
