@@ -15,7 +15,7 @@ import { AuditPanel, type Verdict } from './AuditPanel.tsx';
 
 type File = { key: string; label: string; folder: string; source: string; original: string; kind: 'builtin' | 'local' | 'project'; targetId?: string; projectId?: string; rel?: string; blurb?: string; from?: string };
 type Line = { t: number; kind: 'cmd' | 'out' | 'ok' | 'err' | 'warn' | 'dim'; text: string };
-type Audit = { findings?: Finding[]; scannedSource?: string; ms?: number; error?: string; entries: Entry[]; patch?: ToolEvent; forge?: ToolEvent; replay?: ToolEvent; attack?: ToolEvent; leaf?: string };
+type Audit = { findings?: Finding[]; scannedSource?: string; ms?: number; error?: string; entries: Entry[]; patch?: ToolEvent; forge?: ToolEvent; replay?: ToolEvent; attack?: ToolEvent; attackFix?: ToolEvent; leaf?: string };
 type Section = 'explorer' | 'github' | 'holes' | 'connections';
 type Busy = null | 'scan' | 'agent' | 'tool';
 
@@ -272,7 +272,7 @@ export function Studio() {
         }
         if (r.compileError) log('err', r.compileError);
         const ev: ToolEvent = { tool: 'attack', status: r.status === 'error' ? 'error' : 'ok', summary: `${r.summary} · ${r.ms} ms`, detail: r };
-        record(ev, { attack: ev });
+        record(ev, f.source !== f.original ? { attack: ev, attackFix: ev } : { attack: ev });
         return;
       }
       if (kind === 'forge' || (kind === 'replay' && !audits[f.key]?.leaf)) {
@@ -313,11 +313,13 @@ export function Studio() {
     else if (f.kind === 'builtin' && f.targetId) { subject = { targetId: f.targetId }; if (f.source !== f.original) patched = f.source; }
     else if (patchedApplied && f.original !== f.source) { subject = { name: f.label, source: f.original }; patched = f.source; }
     else subject = { name: f.label, source: f.source };
-    const custom = a?.attack?.detail && a.attack.detail.template === null && a.attack.detail.testSource ? a.attack.detail.testSource as string : null;
+    const customOf = (t?: ToolEvent) => (t?.detail && t.detail.template === null && t.detail.testSource ? t.detail.testSource as string : null);
+    const custom = a?.attack?.detail?.against === 'patched' ? null : customOf(a?.attack);
+    const fixCustom = patched ? customOf(a?.attackFix) : null;
     setBusy('tool'); setBottomTab('terminal');
     log('cmd', `elenchos report ${f.label}${patched ? ' --with-fix' : ''}  (the server re-runs scan, exploit test${patched ? ' and fix check' : ''})`);
     try {
-      const r = await createReport(subject, patched, custom);
+      const r = await createReport(subject, patched, custom, fixCustom);
       const url = `${window.location.origin}${window.location.pathname}#/r/${r.id}`;
       log('ok', `report ready in ${r.ms} ms: ${url}`);
       push(f.key, { kind: 'agent', text: `**Report ready.** [Open the shareable report](${url}): findings, the exploit test${patched ? ' on the original and on your fix' : ''}, a README badge, and Markdown or SARIF export.`, done: true });
@@ -366,7 +368,7 @@ export function Studio() {
           ...(t.tool === 'patch' && t.detail?.patchedSource ? { patch: t } : {}),
           ...(t.tool === 'forge' ? { forge: t, leaf: t.detail?.leaf ?? a.leaf } : {}),
           ...(t.tool === 'replay' ? { replay: t } : {}),
-          ...(t.tool === 'attack' ? { attack: t } : {}),
+          ...(t.tool === 'attack' ? (t.detail?.against === 'patched' ? { attackFix: t } : { attack: t }) : {}),
         }));
       } else if (ev.type === 'review') push(f.key, { kind: 'review', status: ev.status, text: ev.text });
       else if (ev.type === 'error') { buf = ''; log('err', ev.message); push(f.key, { kind: 'error', text: ev.message }); }

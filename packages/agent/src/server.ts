@@ -179,8 +179,8 @@ async function route(req: any, res: any) {
   // A shareable report. The server produces every result in it: scan, exploit test, and (with a fix) verification
   // plus the same exploit test against the fix. The browser only sends the source.
   if (url.pathname === '/api/report') {
-    for (const k of ['patched', 'test'] as const) if (b[k] !== undefined && (typeof b[k] !== 'string' || (b[k] as string).length > 64 * 1024)) throw new BadRequest(`${k} must be Solidity source of at most 64 KB`);
-    if (typeof b.test === 'string') { const d = deniedCheatcode(b.test); if (d) throw new BadRequest(`Refused: the exploit test calls vm.${d}(), which reaches outside the EVM.`); }
+    for (const k of ['patched', 'test', 'fixTest'] as const) if (b[k] !== undefined && (typeof b[k] !== 'string' || (b[k] as string).length > 64 * 1024)) throw new BadRequest(`${k} must be Solidity source of at most 64 KB`);
+    for (const k of ['test', 'fixTest'] as const) if (typeof b[k] === 'string') { const d = deniedCheatcode(b[k] as string); if (d) throw new BadRequest(`Refused: the exploit test calls vm.${d}(), which reaches outside the EVM.`); }
     const ip = String(req.headers['x-forwarded-for'] ?? req.socket.remoteAddress ?? '').split(',')[0].trim();
     if (overBudget(`report:${ip}`, 30)) return json(res, 429, { error: 'This server makes at most 30 reports an hour per visitor.' });
     const forgery = await forgeryFor();
@@ -190,6 +190,7 @@ async function route(req: any, res: any) {
     const p = typeof b.projectId === 'string' ? getProject(b.projectId) : null;
     const patched = typeof b.patched === 'string' ? b.patched : null;
     const test = typeof b.test === 'string' ? b.test : null;
+    const fixTest = typeof b.fixTest === 'string' ? b.fixTest : null; // the fix may change claim(), so it can have its own test
     const started = Date.now();
     const report = await withSubject(subj, async (path, original, title) => {
       let findings: Awaited<ReturnType<typeof scanTool>>['findings'] = []; let failed: string | null = null;
@@ -200,7 +201,7 @@ async function route(req: any, res: any) {
       const attack = failed ? null : await runAttack(root, path, original, forgery, test);
       if (fixVerify && patched) {
         await writeFile(path, patched);
-        const fixAttack = fixVerify.compiles ? await runAttack(root, path, patched, forgery, test) : null;
+        const fixAttack = fixVerify.compiles ? await runAttack(root, path, patched, forgery, fixTest) : null;
         fix = { source: patched, sha256: sha256(patched), verified: fixVerify.verified, compiles: fixVerify.compiles, reason: fixVerify.reason,
           remaining: fixVerify.remaining.map((f) => `${f.rule} ${f.function}`), evaded: fixVerify.evaded, attack: fixAttack };
       }

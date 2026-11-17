@@ -47,8 +47,8 @@ export type Report = {
   engine: string;
 };
 /** Ask the server to build a shareable report (it re-runs scan, exploit test and fix verification itself). */
-export const createReport = (subject: Subject, patched: string | null, test: string | null) =>
-  post<{ id: string; ms: number }>('/api/report', { ...subject, ...(patched ? { patched } : {}), ...(test ? { test } : {}) });
+export const createReport = (subject: Subject, patched: string | null, test: string | null, fixTest: string | null) =>
+  post<{ id: string; ms: number }>('/api/report', { ...subject, ...(patched ? { patched } : {}), ...(test ? { test } : {}), ...(fixTest ? { fixTest } : {}) });
 export async function getReport(id: string): Promise<Report> {
   let r: Response;
   try { r = await fetch(`${API_BASE}/api/report/${encodeURIComponent(id)}`); } catch { throw new Error(UNREACHABLE); }
