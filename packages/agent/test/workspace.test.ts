@@ -41,6 +41,32 @@ contract Checker {
   assert.equal(findings.length, 0);
 });
 
+test('no false alarms: a deposit from the caller is not E4, and a view checker whose caller records the leaf is not E3', async () => {
+  const src = `// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+import {IVerifyProofAggregation} from "../interfaces/IVerifyProofAggregation.sol";
+import {ZkVerifyStatement} from "../ZkVerifyStatement.sol";
+interface IERC20 { function transferFrom(address, address, uint256) external returns (bool); function transfer(address, uint256) external returns (bool); }
+contract Vault {
+    IVerifyProofAggregation immutable zk; IERC20 immutable token; bytes32 immutable vk; uint256 immutable domain;
+    mapping(bytes32 => bool) public used; mapping(address => uint256) public deposited;
+    constructor(address z, address t, bytes32 v, uint256 d) { zk = IVerifyProofAggregation(z); token = IERC20(t); vk = v; domain = d; }
+    function fund(uint256 amount) external { deposited[msg.sender] += amount; require(token.transferFrom(msg.sender, address(this), amount)); }
+    function _check(uint256[] memory inputs, uint256 agg, bytes32[] calldata path, uint256 count, uint256 index) private view returns (bytes32 leaf) {
+        leaf = ZkVerifyStatement.groth16(vk, inputs);
+        require(zk.verifyProofAggregation(domain, agg, leaf, path, count, index), "invalid");
+    }
+    function release(address to, uint256 amount, uint256 agg, bytes32[] calldata path, uint256 count, uint256 index) external {
+        uint256[] memory inputs = new uint256[](2); inputs[0] = uint256(uint160(to)); inputs[1] = amount;
+        bytes32 leaf = _check(inputs, agg, path, count, index);
+        require(!used[leaf], "used"); used[leaf] = true;
+        require(token.transfer(to, amount));
+    }
+}`;
+  const { findings } = await withWorkspace('Vault.sol', src, (path) => scanTool(path));
+  assert.deepEqual(findings.map((f) => `${f.rule} ${f.function}`), []);
+});
+
 test('the fixed contract comes back clean', async () => {
   const { findings } = await withWorkspace('Pinned.sol', demo('PinnedMint.sol'), (path) => scanTool(path));
   assert.equal(findings.length, 0);

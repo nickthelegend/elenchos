@@ -27,6 +27,23 @@ from slither.core.declarations import Function, SolidityFunction
 from slither.slithir.operations import HighLevelCall, InternalCall, SolidityCall
 from slither.slithir.variables import Constant
 
+# Slither cannot fold some constant array lengths (e.g. `uint256[N]` where N is computed) and aborts the whole analysis
+# with an AssertionError. Keep the array's length expression and leave its folded value unknown instead.
+from slither.core.solidity_types import array_type as _array_type
+
+_array_init = _array_type.ArrayType.__init__
+
+
+def _array_init_tolerant(self, t, length):
+    try:
+        _array_init(self, t, length)
+    except AssertionError:
+        _array_init(self, t, None)
+        self._length = length
+
+
+_array_type.ArrayType.__init__ = _array_init_tolerant
+
 VERIFY_FN = "verifyProofAggregation"
 VK_NAME = re.compile(r"(^|_)(vk|vkey|vkhash|verificationkey|verifyingkey)", re.I)
 ACTION_FN = re.compile(r"^(_mint|mint|_transfer|transfer|transferFrom|safeTransfer|safeTransferFrom|_burn|send)$")
@@ -111,10 +128,19 @@ def reaches_verify(fn: Function, depth: int = 0) -> bool:
     return False
 
 
+def pulls_from_caller(ir) -> bool:
+    """token.transferFrom(msg.sender, ...): a deposit of the caller's own tokens, not value leaving the contract."""
+    name = getattr(ir.function, "name", "") or ""
+    args = getattr(ir, "arguments", None) or []
+    return name in ("transferFrom", "safeTransferFrom") and bool(args) and str(args[0]) == "msg.sender"
+
+
 def changes_balances(fn: Function) -> str | None:
     for node in fn.nodes:
         for ir in node.irs:
             if isinstance(ir, (InternalCall, HighLevelCall)) and ACTION_FN.match(getattr(ir.function, "name", "") or ""):
+                if pulls_from_caller(ir):
+                    continue
                 return f"calls {ir.function.name}"
     for v in fn.state_variables_written:
         if SUPPLY_VAR.search(v.name):
@@ -175,8 +201,13 @@ def scan(target: str) -> list[Finding]:
                     findings.append(Finding("E6", "medium", "zkVerify domain comes from the caller", c.name, fn.full_name, dfile, dline,
                         f"`{domain.name}` is a parameter: the receipt may come from any aggregation domain.",
                         "Pin the domain id (immutable)."))
-            # E3: no replay guard
-            if not writes_mapping_after_verify(fn):
+            # E3: no replay guard. An internal view checker can't record anything itself: the guard belongs in the
+            # functions that call it, so judge those instead.
+            guarded = writes_mapping_after_verify(fn)
+            if not guarded and (fn.view or fn.pure):
+                callers = [g for g in c.functions if g is not fn and any(getattr(x, "function", x) is fn for x in g.all_internal_calls())]
+                guarded = not callers or all(writes_mapping_after_verify(g) for g in callers)
+            if not guarded:
                 file, line = src(fn)
                 findings.append(Finding("E3", "high", "Receipts can be replayed", c.name, fn.full_name, file, line,
                     f"{fn.name} checks a receipt but records nothing (no statement or nullifier mapping is written), so the same receipt works again.",
