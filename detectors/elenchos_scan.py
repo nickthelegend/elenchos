@@ -62,13 +62,37 @@ def src(node_or_fn) -> tuple[str, int]:
     return ((m.filename.absolute or m.filename.short) if m else "?", (m.lines[0] if m and m.lines else 0))
 
 
+# zkVerify's official helper contracts (ZkVerifyGroth16 / ZkVerifyUltraplonk / ZkVerifyRisc0) wrap
+# verifyProofAggregation behind verify(vkHash, inputs, domainId, aggregationId, path, leafCount, index); Risc0 adds a
+# version string and takes the public inputs as bytes. A consumer that calls one checks a receipt just the same.
+HELPER_FN = "verify"
+
+
+def receipt_roles(ir) -> dict | None:
+    """For a call that checks a zkVerify receipt, the arguments that play each role; None for any other call."""
+    if not isinstance(ir, HighLevelCall):
+        return None
+    name = getattr(ir.function, "name", None)
+    args = ir.arguments
+    if name == VERIFY_FN and len(args) >= 3:
+        return {"domain": args[0], "leaf": args[2], "vk": None}
+    if name == HELPER_FN and len(args) in (7, 8):
+        types = [str(getattr(a, "type", "")) for a in args]
+        if len(args) == 7 and types[0] == "bytes32" and types[4].startswith("bytes32["):
+            return {"domain": args[2], "leaf": None, "vk": args[0]}
+        if len(args) == 8 and types[0] == "bytes32" and types[5].startswith("bytes32["):
+            return {"domain": args[3], "leaf": None, "vk": args[0]}
+    return None
+
+
 def verify_calls(fn: Function):
-    """(node, call) for every verifyProofAggregation call in fn, including via internal calls one level down."""
+    """(fn, node, call, roles) for every receipt check in fn: verifyProofAggregation, or a zkVerify helper's verify()."""
     out = []
     for node in fn.nodes:
         for ir in node.irs:
-            if isinstance(ir, HighLevelCall) and getattr(ir.function, "name", None) == VERIFY_FN:
-                out.append((fn, node, ir))
+            roles = receipt_roles(ir)
+            if roles:
+                out.append((fn, node, ir, roles))
     return out
 
 
@@ -111,16 +135,27 @@ def scan(target: str) -> list[Finding]:
     sl = Slither(target)
     findings: list[Finding] = []
     for c in sl.contracts_derived:
-        consumer_fns = [f for f in c.functions if f.is_implemented and verify_calls(f)]
+        # A public view/pure function only answers "is this receipt valid?" for others (zkVerify's own helpers do this);
+        # it can't record or pay anything, so the risk sits with its callers. Internal view checkers stay in scope.
+        consumer_fns = [f for f in c.functions if f.is_implemented and verify_calls(f)
+                        and not ((f.view or f.pure) and f.visibility in ("public", "external"))]
         if not consumer_fns:
             continue
         for fn in consumer_fns:
             params = fn.parameters
-            for _, node, ir in verify_calls(fn):
+            for _, node, ir, roles in verify_calls(fn):
                 file, line = src(node)
-                domain, _agg, leaf = ir.arguments[0], ir.arguments[1], ir.arguments[2]
+                domain, leaf, vk = roles["domain"], roles["leaf"], roles["vk"]
+                if vk is not None:
+                    # A helper call: the vk is an argument of the call itself.
+                    for p in params:
+                        if vk == p or is_dependent(vk, p, fn):
+                            pfile, pline = src(p)
+                            findings.append(Finding("E1", "critical", "Verification key comes from the caller", c.name, fn.full_name, pfile, pline,
+                                f"The vkHash passed to zkVerify's verify() helper comes from parameter `{p.name}`. An attacker passes the vkHash of any circuit they wrote and a real zkVerify receipt for it.",
+                                "Pin the vkHash (immutable, set in the constructor) and pass that to verify()."))
                 # E1b: leaf straight from a parameter
-                if leaf in params:
+                elif leaf in params:
                     file, line = src(leaf)  # point at the parameter the attacker controls
                     findings.append(Finding("E1b", "critical", "The caller supplies the leaf", c.name, fn.full_name, file, line,
                         f"`{leaf.name}` is a parameter and is passed to {VERIFY_FN} unchanged: any statement zkVerify ever verified will pass.",

@@ -21,6 +21,26 @@ test('LeafFromCaller: the caller-supplied leaf (E1b) and the receipt-free airdro
   assert.deepEqual(findings.map((f) => f.rule).sort(), ['E1b', 'E4']);
 });
 
+test('HelperMint: calls through zkVerify\'s own verify() helper still get E1, E3 and E6', async () => {
+  const { findings } = await withWorkspace('Helper.sol', demo('HelperMint.sol'), (path) => scanTool(path));
+  assert.deepEqual(findings.map((f) => f.rule).sort(), ['E1', 'E3', 'E6']);
+});
+
+test('a public view checker (like zkVerify\'s helpers) is not a consumer: no findings', async () => {
+  const src = `// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+import {IVerifyProofAggregation} from "../interfaces/IVerifyProofAggregation.sol";
+contract Checker {
+    IVerifyProofAggregation immutable zk;
+    constructor(address z) { zk = IVerifyProofAggregation(z); }
+    function verify(bytes32 leaf, uint256 domainId, uint256 aggregationId, bytes32[] calldata path, uint256 count, uint256 index) external view returns (bool) {
+        return zk.verifyProofAggregation(domainId, aggregationId, leaf, path, count, index);
+    }
+}`;
+  const { findings } = await withWorkspace('Checker.sol', src, (path) => scanTool(path));
+  assert.equal(findings.length, 0);
+});
+
 test('the fixed contract comes back clean', async () => {
   const { findings } = await withWorkspace('Pinned.sol', demo('PinnedMint.sol'), (path) => scanTool(path));
   assert.equal(findings.length, 0);

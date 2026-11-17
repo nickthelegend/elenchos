@@ -10,6 +10,8 @@ export const TARGETS: Target[] = [
     blurb: 'A claim token that mints to whoever brings a zkVerify receipt. Takes the verification key from the caller and never records a statement.' },
   { id: 'leaf-from-caller', title: 'LeafFromCaller.sol', path: `${demo}LeafFromCaller.sol`, language: 'solidity',
     blurb: 'Has a replay guard, yet takes the leaf itself from the caller and has an airdrop that checks no receipt at all.' },
+  { id: 'helper-mint', title: 'HelperMint.sol', path: `${demo}HelperMint.sol`, language: 'solidity',
+    blurb: 'Uses zkVerify\'s official Groth16 helper, which builds the leaf correctly, yet still takes the vk and domain from the caller and records nothing.' },
   { id: 'pinned-mint', title: 'PinnedMint.sol', path: `${demo}PinnedMint.sol`, language: 'solidity',
     blurb: 'The fixed version: pins the vk and domain, rebuilds the leaf on-chain, and consumes each statement once.' },
 ];
