@@ -8,7 +8,7 @@ impact, reads the real zkVerify verifier to show the forged leaf is rejected on 
 > ἔλεγχος — the Socratic cross-examination that exposes a false claim. Here the claim is "this proof means what you
 > think it means."
 
-**▶ [Watch the 1:40 demo](https://github.com/nickthelegend/elenchos/releases/download/v0.1.0/elenchos-film.mp4)** (recorded live:
+**🌐 [elenchos-studio.vercel.app](https://elenchos-studio.vercel.app)** · **▶ [Watch the 1:40 demo](https://github.com/nickthelegend/elenchos/releases/download/v0.1.0/elenchos-film.mp4)** (recorded live:
 real Claude, Slither, snarkjs, a zkVerify node and the Sepolia verifier) · **[Read the write-up: "zkVerify verified both proofs"](docs/zkverify-verified-both.md)** · **[How we played all four tracks](docs/agent-games-four-tracks.md)**
 
 ![Elenchos Studio after a real investigation: the verified fix as a diff, the terminal log of scan, forge, zkVerify and verify, and the audit panel with the evidence](docs/img/studio.jpg)

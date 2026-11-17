@@ -16,6 +16,7 @@ const UNREACHABLE = "Can't reach the Elenchos server. Start it with `node --expe
 export async function getTargets(): Promise<{ targets: Target[]; ready: Ready }> {
   let r: Response;
   try { r = await fetch(`${API_BASE}/api/targets`); } catch { throw new Error(UNREACHABLE); }
+  if (r.status === 404) throw new Error('No Elenchos server is running behind this address yet.');
   if (!r.ok) throw new Error(`The server answered ${r.status} for the target list.`);
   return r.json();
 }
