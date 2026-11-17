@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Editor, { DiffEditor, type Monaco } from '@monaco-editor/react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
-import { getTargets, investigate, scanSource, type AgentEvent, type Finding, type Ready, type ToolEvent, type Turn } from '../api.ts';
+import { askZkVerify, forgeExploit, getTargets, investigate, scanSource, verifyFix, type AgentEvent, type Finding, type Ready, type ToolEvent, type Turn } from '../api.ts';
 import { Mark } from '../icons.tsx';
 import { Markdown } from '../markdown.tsx';
 import { defineTheme } from './theme.ts';
@@ -13,7 +13,7 @@ import { HOLES_REF, NEW_FILE_TEMPLATE } from './content.ts';
 type File = { path: string; source: string; original: string; builtin: boolean; targetId?: string; blurb?: string };
 type Line = { t: number; kind: 'cmd' | 'out' | 'ok' | 'err' | 'warn' | 'dim'; text: string };
 type Entry = { kind: 'user' | 'agent'; text: string } | { kind: 'tool'; event: ToolEvent } | { kind: 'review'; status: string; text: string };
-type Audit = { findings?: Finding[]; scannedSource?: string; ms?: number; error?: string; entries: Entry[]; patch?: ToolEvent; forge?: ToolEvent; replay?: ToolEvent };
+type Audit = { findings?: Finding[]; scannedSource?: string; ms?: number; error?: string; entries: Entry[]; patch?: ToolEvent; forge?: ToolEvent; replay?: ToolEvent; leaf?: string };
 type Section = 'explorer' | 'audit' | 'holes' | 'connections';
 
 const art = (n: string) => `/art/${n}.webp`;
@@ -53,7 +53,7 @@ export function Studio() {
   const [showAudit, setShowAudit] = useState(true);
   const [bottomTab, setBottomTab] = useState<'terminal' | 'problems'>('terminal');
   const [view, setView] = useState<'source' | 'diff'>('source');
-  const [busy, setBusy] = useState<null | 'scan' | 'agent'>(null);
+  const [busy, setBusy] = useState<null | 'scan' | 'agent' | 'tool'>(null);
   const [input, setInput] = useState('');
   const [creating, setCreating] = useState<string | null>(null);
   const [cursor, setCursor] = useState({ ln: 1, col: 1 });
@@ -159,6 +159,38 @@ export function Studio() {
     } finally { setBusy(null); }
   }
 
+  // A pipeline step run directly (no model): the result lands in the terminal, the chat thread and the audit panel.
+  async function step(kind: 'forge' | 'replay' | 'verify') {
+    if (!file || busy) return;
+    const f = file; setBusy('tool'); setBottomTab('terminal');
+    const record = (t: ToolEvent, extra: Partial<Audit> = {}) => {
+      log(t.status === 'ok' ? 'ok' : t.status === 'error' ? 'err' : 'warn', `› ${TOOL_NAME[t.tool] ?? t.tool}: ${t.summary}`);
+      patchAudit(f.path, (a) => ({ ...a, ...extra, entries: [...a.entries, { kind: 'tool', event: t }] }));
+    };
+    try {
+      if (kind === 'forge' || (kind === 'replay' && !audits[f.path]?.leaf)) {
+        log('cmd', 'elenchos forge --attacker-circuit --mint 1000000');
+        const r = await forgeExploit();
+        record(r.event, { forge: r.event, leaf: r.leaf ?? undefined });
+        if (kind === 'replay') {
+          if (!r.leaf) throw new Error('The forge step returned no leaf, so there is nothing to ask zkVerify about.');
+          log('cmd', `elenchos replay ${r.leaf.slice(0, 12)}… --verifier sepolia`);
+          const q = await askZkVerify(r.leaf); record(q.event, { replay: q.event });
+        }
+      } else if (kind === 'replay') {
+        const leaf = audits[f.path]!.leaf!;
+        log('cmd', `elenchos replay ${leaf.slice(0, 12)}… --verifier sepolia`);
+        const q = await askZkVerify(leaf); record(q.event, { replay: q.event });
+      } else {
+        if (f.source === f.original) { log('warn', 'Verify fix checks your edited file against the original. Edit the contract (or ask the agent to propose a fix) first.'); return; }
+        log('cmd', `elenchos verify ${f.path}  (compile + re-scan + anti-cheat)`);
+        const r = await verifyFix(base(f.path), f.original, f.source);
+        record(r.event, { patch: r.event });
+      }
+    } catch (e) { log('err', String((e as Error).message ?? e)); }
+    finally { setBusy(null); }
+  }
+
   function history(a: Audit): Turn[] {
     const turns: Turn[] = [];
     const add = (role: Turn['role'], text: string) => { const l = turns[turns.length - 1]; if (l?.role === role) l.text += `\n${text}`; else turns.push({ role, text }); };
@@ -250,11 +282,11 @@ export function Studio() {
         <button className="sd-btn primary" onClick={runScan} disabled={!file || Boolean(busy)} title="Slither + the five Elenchos detectors. Deterministic, no model.">
           {busy === 'scan' ? <span className="spin" /> : <Ico n="play" />}<span>Run audit</span>
         </button>
-        <button className="sd-btn" onClick={() => ask('Forge a real Groth16 proof that exploits the worst hole in this contract and show me its zkVerify leaf.')} disabled={!file || Boolean(busy)}><Ico n="key" /><span>Forge exploit</span></button>
-        <button className="sd-btn hide-md" onClick={() => ask('Ask zkVerify’s real verifier on Sepolia whether the forged leaf is in its latest aggregation, and explain what that means for this contract.')} disabled={!file || Boolean(busy)}><Ico n="tree" /><span>Ask zkVerify</span></button>
-        <button className="sd-btn hide-md" onClick={() => ask('Propose the smallest fix for every finding, then verify it (it must compile, the re-scan must be clean, and nothing may be deleted to hide a finding).')} disabled={!file || Boolean(busy)}><Ico n="wrench" /><span>Verify fix</span></button>
+        <button className="sd-btn" onClick={() => step('forge')} disabled={!file || Boolean(busy)} title="A real Groth16 proof from an attacker circuit, verified locally, with its zkVerify leaf. No model."><Ico n="key" /><span>Forge exploit</span></button>
+        <button className="sd-btn hide-md" onClick={() => step('replay')} disabled={!file || Boolean(busy)} title="Reads zkVerify's real verifier on Sepolia for the forged leaf. No model."><Ico n="tree" /><span>Ask zkVerify</span></button>
+        <button className="sd-btn hide-md" onClick={() => step('verify')} disabled={!file || Boolean(busy)} title="Compiles your edited file, re-scans it and rejects fixes that cheat. No model."><Ico n="wrench" /><span>Verify fix</span></button>
         {busy === 'agent' && <button className="sd-btn danger" onClick={stop}><Ico n="stop" /><span>Stop</span></button>}
-        {busy && <span className="sd-busy"><span className="pulse" />{busy === 'scan' ? 'Scanning…' : 'Agent working…'}</span>}
+        {busy && <span className="sd-busy"><span className="pulse" />{busy === 'scan' ? 'Scanning…' : busy === 'tool' ? 'Running…' : 'Agent working…'}</span>}
       </div>
       <div className="sd-right">
         <a className="sd-link hide-md" href={REPO} target="_blank" rel="noreferrer">GitHub</a>
@@ -427,7 +459,7 @@ export function Studio() {
         {audit.entries.length === 0 && (
           <div className="sd-chatempty">
             <p>Ask in plain words. The agent picks its tools (scan, forge, ask zkVerify, verify fix) and every call shows up here and in the terminal.</p>
-            {['Find every hole, prove the impact, then propose and verify a fix.', 'Is the verification key pinned? Show me what happens if it is not.', 'Explain the worst finding like I’m new to zkVerify.'].map((p) => (
+            {['Find every hole, prove the impact, then propose and verify a fix.', 'Is the verification key pinned? Show me what happens if it is not.', 'Propose the smallest fix for every finding and verify it.'].map((p) => (
               <button key={p} disabled={!file || Boolean(busy)} onClick={() => ask(p)}>{p}</button>
             ))}
           </div>

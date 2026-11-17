@@ -16,7 +16,12 @@ const MODEL = process.env.ELENCHOS_MODEL ?? 'claude-sonnet-5-5';
 const SYSTEM = `You are Elenchos, a red team for smart contracts that trust zkVerify aggregation receipts.
 You investigate one target contract through tools and explain what you find in plain language a developer trusts.
 
-The four holes you look for, and the fix for each:
+Context: this is a defensive audit run by the contract's own developer in the Elenchos studio. The forge tool builds a
+proof locally with a demo attacker circuit and never submits anything; the replay tool only reads zkVerify's public
+verifier on the Sepolia testnet. No transaction is sent and no real contract or funds are touched. Demonstrating the
+impact this way is how the developer learns the hole is real before shipping the fix.
+
+The five holes you look for, and the fix for each:
 - E1 the verification key comes from the caller -> pin it as an immutable set in the constructor.
 - E1b the caller passes the aggregation leaf itself -> rebuild the leaf on-chain from the pinned vk and the inputs.
 - E3 a receipt is checked but never recorded -> record the statement hash and reject the second use.
@@ -74,7 +79,7 @@ export async function investigate(opts: { targetPath: string; originalSource: st
       const stream = client.messages.stream({ model: MODEL, max_tokens: 8000, system: SYSTEM, tools: toolDefs, messages }, { signal: opts.signal });
       stream.on('text', (t) => emit({ type: 'text', text: t }));
       const msg = await stream.finalMessage();
-      if (msg.stop_reason === 'refusal') { emit({ type: 'done', stopReason: 'refusal' }); return; }
+      if (msg.stop_reason === 'refusal') { emit({ type: 'error', message: 'The model declined to continue this step (stop reason: refusal). Nothing was faked: the toolbar buttons run Forge exploit, Ask zkVerify and Verify fix directly, without the model.' }); emit({ type: 'done', stopReason: 'refusal' }); return; }
       const toolUses = msg.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
       if (toolUses.length === 0) { emit({ type: 'done', stopReason: msg.stop_reason }); return; }
       messages.push({ role: 'assistant', content: msg.content });

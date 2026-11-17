@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { investigate } from './agent.ts';
 import { TARGETS, findTarget, source } from './targets.ts';
 import { badSource, overBudget, withWorkspace } from './workspace.ts';
-import { scanTool } from './tools.ts';
+import { forgeTool, patchTool, replayTool, scanTool } from './tools.ts';
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 try { if (existsSync(`${ROOT}.env`)) process.loadEnvFile(`${ROOT}.env`); } catch {}
@@ -64,6 +64,31 @@ async function route(req: any, res: any) {
         catch (e) { throw new Error(await compileError(path) ?? String((e as Error).message ?? e)); }
       });
       return json(res, 200, { findings, ms: Date.now() - started });
+    } catch (e) {
+      return json(res, 422, { error: String((e as Error).message ?? e).replace(/\/[^\s'"]*elenchos-ws-[^/\s]*/g, '').slice(0, 600) });
+    }
+  }
+  // The pipeline steps without the model: each is deterministic code (snarkjs, the Sepolia verifier, Foundry + Slither).
+  if (req.method === 'POST' && (url.pathname === '/api/forge' || url.pathname === '/api/replay' || url.pathname === '/api/verify')) {
+    let b: Record<string, unknown>;
+    try { b = JSON.parse((await readBody(req)) || '{}'); if (!b || typeof b !== 'object' || Array.isArray(b)) throw new Error(); }
+    catch (e) { return e instanceof TooLarge ? json(res, 413, { error: `request body over ${MAX_BODY} bytes` }) : json(res, 400, { error: 'request body must be a JSON object' }); }
+    try {
+      if (url.pathname === '/api/forge') {
+        const amount = typeof b.amount === 'string' && /^[0-9]{1,30}$/.test(b.amount) ? BigInt(b.amount) : 1_000_000n;
+        const recipient = typeof b.recipient === 'string' && /^0x[0-9a-fA-F]{1,40}$/.test(b.recipient) ? BigInt(b.recipient) : 0xA11cEn;
+        const r = await forgeTool(recipient, amount);
+        return json(res, 200, { event: r.event, leaf: r.leaf });
+      }
+      if (url.pathname === '/api/replay') {
+        if (typeof b.leaf !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(b.leaf)) return json(res, 400, { error: 'leaf must be the 32-byte hex leaf a forge call returned' });
+        const r = await replayTool(b.leaf as `0x${string}`);
+        return json(res, 200, { event: r.event });
+      }
+      const bad = badSource(b.name, b.original) ?? badSource(b.name, b.patched);
+      if (bad) return json(res, 400, { error: bad });
+      const r = await withWorkspace(b.name as string, b.original as string, (path) => patchTool(path, b.patched as string));
+      return json(res, 200, { event: r.event });
     } catch (e) {
       return json(res, 422, { error: String((e as Error).message ?? e).replace(/\/[^\s'"]*elenchos-ws-[^/\s]*/g, '').slice(0, 600) });
     }

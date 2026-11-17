@@ -33,6 +33,19 @@ export async function scanSource(name: string, source: string): Promise<{ findin
   return body;
 }
 
+async function post<T>(path: string, body: unknown): Promise<T> {
+  let r: Response;
+  try { r = await fetch(`${API_BASE}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); }
+  catch { throw new Error(UNREACHABLE); }
+  const out = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(out.error ?? `The server answered ${r.status}.`);
+  return out as T;
+}
+/** The pipeline steps without the model. */
+export const forgeExploit = () => post<{ event: ToolEvent; leaf: string | null }>('/api/forge', {});
+export const askZkVerify = (leaf: string) => post<{ event: ToolEvent }>('/api/replay', { leaf });
+export const verifyFix = (name: string, original: string, patched: string) => post<{ event: ToolEvent }>('/api/verify', { name, original, patched });
+
 /** What the agent investigates: a repo target by id, or any pasted source by file name. */
 export type Subject = { targetId: string } | { name: string; source: string };
 
