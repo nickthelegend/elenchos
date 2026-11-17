@@ -11,7 +11,23 @@ impact, reads the real zkVerify verifier to show the forged leaf is rejected on 
 **▶ [Watch the 1:40 demo](https://github.com/nickthelegend/elenchos/releases/download/v0.1.0/elenchos-film.mp4)** (recorded live:
 real Claude, Slither, snarkjs, a zkVerify node and the Sepolia verifier) · **[Read the write-up: "zkVerify verified both proofs"](docs/zkverify-verified-both.md)** · **[How we played all four tracks](docs/agent-games-four-tracks.md)**
 
-![The Elenchos case room after a full investigation: three findings, a forged proof, zkVerify's answer, and a verified fix](docs/img/case-room-verified.jpg)
+![Elenchos Studio after a real investigation: the verified fix as a diff, the terminal log of scan, forge, zkVerify and verify, and the audit panel with the evidence](docs/img/studio.jpg)
+
+## Elenchos Studio: an online auditor for ZK contracts
+
+Open the studio (`#/app`) and you get an IDE built for one job: an editor with your contract, a terminal, the agent
+next to it, and an audit panel with the verdict.
+
+- **Run audit:** Slither and the five Elenchos detectors on any pasted contract, in about half a second. No model and
+  no key; findings land as squiggles on the exact line, in Problems and in the audit panel.
+- **Ask the agent:** "Forge exploit", "Ask zkVerify" and "Verify fix" are one click each, or ask in plain words. Every
+  tool call streams into the terminal and the chat.
+- **Apply the fix:** a verified patch opens as a side-by-side diff; one click applies it to your file.
+- **Your files:** new files live in your browser; each audit runs in a throwaway copy of the Foundry project on the
+  server, so `../interfaces/...` imports resolve and nothing you paste touches the repo.
+
+The layout follows [AlgoCraft IDE](https://github.com/nickthelegend/algorand-ide); the landing page and 3D art are new
+(art generated with ChatGPT, kit in [docs/ART-3D.md](docs/ART-3D.md)).
 
 ## Why this exists
 
@@ -79,16 +95,17 @@ Sepolia) and the full forged-receipt fork test (with a Kurier key) are the on-ch
 
 ```bash
 pnpm install
-pnpm -r test                     # 21 tests; the 3 forged-receipt fork tests skip until a Kurier key is set
+pnpm -r test                     # all tests; the 3 forged-receipt fork tests skip until a Kurier key is set
 (cd packages/web && pnpm build)  # build the UI
 ANTHROPIC_API_KEY=... node --experimental-strip-types packages/agent/src/server.ts
-# open http://localhost:8787
+# open http://localhost:8787 (landing) and http://localhost:8787/#/app (studio)
 ```
 
 Or with Docker (bundles Foundry, Slither, Node):
 
 ```bash
 docker build -t elenchos . && docker run -p 8787:8787 -e ANTHROPIC_API_KEY=... elenchos
+# public deployment: also set ELENCHOS_INVESTIGATIONS_PER_HOUR=5 to cap agent runs per visitor
 ```
 
 Optional keys unlock more: `OPENAI_API_KEY` (second opinion), `SEPOLIA_RPC_URL` (your own fork node; a public one is
