@@ -24,9 +24,13 @@ let active = 0;
 const waiters: (() => void)[] = [];
 async function slot() { if (active < 2) { active++; return; } await new Promise<void>((ok) => waiters.push(ok)); active++; }
 function release() { active--; waiters.shift()?.(); }
+/** Run `fn` in one of the two compile/scan slots. */
+export async function limited<T>(fn: () => Promise<T>): Promise<T> { await slot(); try { return await fn(); } finally { release(); } }
 
 export async function withWorkspace<T>(name: string, source: string, fn: (path: string) => Promise<T>): Promise<T> {
-  await slot();
+  return limited(() => inWorkspace(name, source, fn));
+}
+async function inWorkspace<T>(name: string, source: string, fn: (path: string) => Promise<T>): Promise<T> {
   const work = await mkdtemp(join(tmpdir(), 'elenchos-ws-'));
   try {
     await cp(CONTRACTS, work, { recursive: true, filter: (s) => !/\/(out|cache|\.git|node_modules|test|script|broadcast)(\/|$)/.test(s.slice(CONTRACTS.length - 1)) });
@@ -36,7 +40,6 @@ export async function withWorkspace<T>(name: string, source: string, fn: (path: 
     return await fn(path);
   } finally {
     await rm(work, { recursive: true, force: true });
-    release();
   }
 }
 
