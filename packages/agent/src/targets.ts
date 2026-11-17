@@ -8,6 +8,8 @@ export type Target = { id: string; title: string; path: string; language: 'solid
 export const TARGETS: Target[] = [
   { id: 'vulnerable-mint', title: 'VulnerableMint.sol', path: `${demo}VulnerableMint.sol`, language: 'solidity',
     blurb: 'A claim token that mints to whoever brings a zkVerify receipt. Takes the verification key from the caller and never records a statement.' },
+  { id: 'leaf-from-caller', title: 'LeafFromCaller.sol', path: `${demo}LeafFromCaller.sol`, language: 'solidity',
+    blurb: 'Has a replay guard, yet takes the leaf itself from the caller and has an airdrop that checks no receipt at all.' },
   { id: 'pinned-mint', title: 'PinnedMint.sol', path: `${demo}PinnedMint.sol`, language: 'solidity',
     blurb: 'The fixed version: pins the vk and domain, rebuilds the leaf on-chain, and consumes each statement once.' },
 ];
