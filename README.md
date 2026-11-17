@@ -1,5 +1,7 @@
 # Elenchos
 
+[![Elenchos](https://elenchos.201-18-198-162.sslip.io/api/badge/usMu9WtO.svg)](https://elenchos-studio.vercel.app/#/r/usMu9WtO)
+
 **A red team for smart contracts that trust zkVerify proofs.** Elenchos cross-examines a contract that consumes
 zkVerify aggregation receipts: it scans for the ways a consumer can be fooled, forges a real proof to show the
 impact, reads the real zkVerify verifier to show the forged leaf is rejected on its own, and then proposes a fix and
@@ -22,7 +24,16 @@ next to it, and an audit panel with the verdict.
   no key; findings land as squiggles on the exact line, in Problems and in the audit panel.
 - **Ask the agent:** "Forge exploit", "Ask zkVerify" and "Verify fix" are one click each, or ask in plain words. Every
   tool call streams into the terminal and the chat.
+- **Run exploit test:** a real Foundry test on a local EVM, with a real forged Groth16 proof, shows whether the
+  attacker gets paid (`VulnerableMint`: 1,000,000 minted, then 2,000,000 on a replay). Run it again after the fix and
+  the same attacks revert. Stock tests cover the common claim shapes; the agent writes its own for anything else.
 - **Apply the fix:** a verified patch opens as a side-by-side diff; one click applies it to your file.
+- **Share report:** the server re-runs the audit, the exploit test and your fix, stores the result and gives you a
+  link ([example](https://elenchos-studio.vercel.app/#/r/usMu9WtO)) with a README badge and Markdown / SARIF / JSON
+  export. The browser only sends source; every result on the page was produced by the server.
+- **Connect a GitHub repo** (cloned with submodules, audited with imports resolved) or **audit a deployed contract
+  by address** on ten chains: its verified source comes from Sourcify, or Blockscout, with the exact compiler it was
+  deployed with, and a proxy points you to its implementation.
 - **Your files:** new files live in your browser; each audit runs in a throwaway copy of the Foundry project on the
   server, so `../interfaces/...` imports resolve and nothing you paste touches the repo.
 
@@ -52,14 +63,29 @@ receipt. Elenchos brings one.
 `PinnedZkVerifyConsumer` (in `contracts/src`) is the safe base that closes all of them; `VulnerableMint` is the
 on-camera target that has them.
 
+## Use it from your own agent (MCP)
+
+Elenchos is also an MCP server, so Claude Code, Cursor or any MCP client can audit from the developer's own editor.
+Eight deterministic tools (no model runs on our side): `audit_contract`, `run_exploit_test`, `verify_fix`,
+`audit_github_repo`, `audit_deployed_contract`, `forge_proof`, `ask_zkverify`, `create_report`.
+
+```bash
+claude mcp add --transport http elenchos https://elenchos.201-18-198-162.sslip.io/mcp
+```
+
+Cursor and other clients: add `{ "elenchos": { "url": "https://elenchos.201-18-198-162.sslip.io/mcp" } }` to the MCP
+config. Checked against the official MCP TypeScript SDK client (`connect`, `listTools`, `callTool`).
+
 ## The agent
 
-Elenchos is chat-driven. You ask it about a contract and watch it work: Claude drives the investigation with four
+Elenchos is chat-driven. You ask it about a contract and watch it work: Claude drives the investigation with five
 real tools, and every call shows up as a card.
 
 - **scan** — the Slither-based detector (`detectors/elenchos_scan.py`), real data-dependency analysis.
 - **forge** — a real Groth16 proof from an attacker circuit that mints an arbitrary amount (snarkjs, verified locally).
 - **replay** — reads the **real** zkVerify verifier on Ethereum Sepolia and shows the forged leaf returns `false`.
+- **attack** — runs the exploit test (above) on the original file, and again on its own verified patch to show the
+  same attacks now revert. For a claim shape with no stock test, it writes the Foundry test itself.
 - **patch** — applies a proposed fix to a throwaway copy, compiles it with Foundry, and re-scans. A patch counts as
   verified only when it compiles, the scanner is clean, and it hasn't cheated (deleting or renaming the vulnerable
   function, or ripping out the receipt check). An OpenAI model adds an independent second opinion; the deterministic
@@ -87,8 +113,8 @@ Sepolia) and the full forged-receipt fork test (with a Kurier key) are the on-ch
 | `detectors/` | the Python scanner (`elenchos_scan.py`) and its SARIF output (`sarif.py`) for GitHub code scanning |
 | `packages/forge` | real Groth16 proofs, zkVerify statement hashing, and the Kurier client + end-to-end attack script |
 | `packages/core` | the engine: scan-as-data and the deterministic patch verifier |
-| `packages/agent` | the chat agent (Claude + tools), the OpenAI reviewer, and the SSE server |
-| `packages/web` | the case-room UI |
+| `packages/agent` | the chat agent (Claude + tools), the exploit-test runner, reports and badges, GitHub and deployed-contract import, the MCP server, and the HTTP/SSE server |
+| `packages/web` | the landing page, Elenchos Studio and the shareable report page |
 | `packages/arena` | a bonus: the Steal the VFY agent for the same Agent Games event (see its own README) |
 
 ## Run it
