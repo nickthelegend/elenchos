@@ -28,6 +28,8 @@ const run = (cmd: string, args: string[], opts: { cwd?: string; timeout?: number
 /** github.com/owner/repo[/tree/ref[/subdir]] → its parts, or null. */
 export function parseRepo(url: unknown): { owner: string; repo: string; ref: string | null; subdir: string | null } | null {
   if (typeof url !== 'string') return null;
+  url = url.trim();
+  if (!/^(https?:\/\/)?(www\.)?github\.com\//i.test(url) && /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}(\/tree\/.*)?$/.test(url)) url = `github.com/${url}`;
   const m = /^(?:https?:\/\/)?(?:www\.)?github\.com\/([A-Za-z0-9-]{1,39})\/([A-Za-z0-9._-]{1,100}?)(?:\.git)?(?:\/tree\/([A-Za-z0-9._\/-]{1,120}))?\/?$/.exec(url.trim())
     ?? /^([A-Za-z0-9-]{1,39})\/([A-Za-z0-9._-]{1,100})$/.exec(url.trim());
   if (!m) return null;

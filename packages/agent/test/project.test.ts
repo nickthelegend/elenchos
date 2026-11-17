@@ -11,6 +11,7 @@ test('repository URLs: full, short, tree/branch/folder; anything else is refused
   assert.deepEqual(parseRepo('acme/vault'), { owner: 'acme', repo: 'vault', ref: null, subdir: null });
   assert.deepEqual(parseRepo('github.com/acme/vault.git'), { owner: 'acme', repo: 'vault', ref: null, subdir: null });
   assert.deepEqual(parseRepo('https://github.com/acme/vault/tree/main/contracts'), { owner: 'acme', repo: 'vault', ref: 'main', subdir: 'contracts' });
+  assert.deepEqual(parseRepo('acme/vault/tree/main/contracts'), { owner: 'acme', repo: 'vault', ref: 'main', subdir: 'contracts' });
   assert.equal(parseRepo('https://gitlab.com/acme/vault'), null);
   assert.equal(parseRepo('https://github.com/acme/vault/tree/main/../../etc'), null);
   assert.equal(parseRepo('acme/vault; rm -rf /'), null);

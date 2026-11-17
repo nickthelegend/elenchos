@@ -70,6 +70,7 @@ export function Studio() {
   const [connecting, setConnecting] = useState<{ url: string; since: number } | null>(null);
   const [ghError, setGhError] = useState<string | null>(null);
   const [, setTick] = useState(0);
+  const [edTick, setEdTick] = useState(0);
   const abortRef = useRef<() => void>();
   const monacoRef = useRef<Monaco | null>(null);
   const editorRef = useRef<any>(null);
@@ -127,7 +128,7 @@ export function Studio() {
       options: { isWholeLine: true, className: `ln-${f.severity}`, glyphMarginClassName: `codicon codicon-${f.severity === 'medium' ? 'warning' : 'error'} gl-${f.severity}`, glyphMarginHoverMessage: { value: `**${f.rule} · ${f.severity}** ${f.title}` },
         after: { content: `  ${f.rule} · ${f.title}`, inlineClassName: `ln-note ln-note-${f.severity}` } },
     })));
-  }, [findings, stale, view, active]);
+  }, [findings, stale, view, active, edTick]);
 
   const projectOf = (f: File) => projects.find((p) => p.id === f.projectId);
   const editsFor = (projectId: string) => Object.fromEntries(files.filter((x) => x.projectId === projectId && x.source !== x.original).map((x) => [x.rel!, x.source]));
@@ -503,7 +504,7 @@ export function Studio() {
         {file && view === 'source' && (
           <Editor key={file.key} path={file.key} language="sol" theme="elenchos" value={file.source}
             onChange={(v) => edit(v ?? '')} beforeMount={defineTheme}
-            onMount={(ed, m) => { editorRef.current = ed; monacoRef.current = m; ed.onDidChangeCursorPosition((e: any) => setCursor({ ln: e.position.lineNumber, col: e.position.column })); setCursor({ ln: 1, col: 1 }); setAudits((x) => ({ ...x })); }}
+            onMount={(ed, m) => { editorRef.current = ed; monacoRef.current = m; ed.onDidChangeCursorPosition((e: any) => setCursor({ ln: e.position.lineNumber, col: e.position.column })); setCursor({ ln: 1, col: 1 }); setEdTick((x) => x + 1); }}
             loading={<div className="sd-loading"><span className="spin" />Loading the editor…</div>}
             options={{ fontFamily: '"Commit Mono", ui-monospace, Menlo, monospace', fontSize: 13.5, lineHeight: 22, minimap: { enabled: !narrow, scale: 1 }, glyphMargin: true, scrollBeyondLastLine: false, smoothScrolling: true, cursorBlinking: 'smooth', renderLineHighlight: 'all', padding: { top: 10 }, automaticLayout: true, wordWrap: narrow ? 'on' : 'off', fixedOverflowWidgets: true }} />
         )}
