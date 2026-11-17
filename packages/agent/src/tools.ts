@@ -45,9 +45,15 @@ const RECEIPT_EVENT = '0x431e1446261f5ed64f6fcd5c8a75fe76dcc7c2c207555eeb6cf2774
 
 /** The most recent real aggregation posted to zkVerify's Sepolia verifier, read from its own events. */
 async function latestAggregation(client: ReturnType<typeof createPublicClient>) {
-  const head = await client.getBlockNumber();
+  // Public nodes are load-balanced: the backend answering getLogs can trail the one that reported the head, and it
+  // refuses a range that reaches past its own tip. Stay 32 blocks behind, and retry a chunk once if it still fails.
+  const head = (await client.getBlockNumber()) - 32n;
+  const chunk = async (from: bigint, to: bigint) => {
+    try { return await client.getLogs({ address: ZKVERIFY, fromBlock: from, toBlock: to } as never); }
+    catch { await new Promise((r) => setTimeout(r, 400)); return client.getLogs({ address: ZKVERIFY, fromBlock: from, toBlock: to } as never); }
+  };
   for (let to = head; to > head - 200_000n; to -= 10_000n) {
-    const logs = await client.getLogs({ address: ZKVERIFY, fromBlock: to - 9_999n, toBlock: to } as never) as { topics: Hex[]; blockNumber: bigint }[];
+    const logs = await chunk(to - 9_999n, to) as unknown as { topics: Hex[]; blockNumber: bigint }[];
     const hits = logs.filter((l) => l.topics[0] === RECEIPT_EVENT);
     if (hits.length) { const l = hits[hits.length - 1]; return { domainId: BigInt(l.topics[1]), aggregationId: BigInt(l.topics[2]), root: l.topics[3], block: l.blockNumber }; }
   }
