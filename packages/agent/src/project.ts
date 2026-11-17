@@ -5,7 +5,7 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { cp, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve, sep } from 'node:path';
 import { recoverDeps } from './deps.ts';
@@ -249,7 +249,9 @@ export async function withProjectCopy<T>(p: Project, edits: Record<string, strin
   for (const k of Object.keys(edits)) if (!known.has(k)) throw new Error(`${k} is not a file of ${p.repo}`);
   const work = await mkdtemp(join(tmpdir(), 'elenchos-ws-'));
   try {
-    await cp(p.root, work, { recursive: true, filter: (s) => { const rel = s.slice(p.root.length); return !/\/(out|cache|\.git)(\/|$)/.test(rel) && !/^\/(test|script)(\/|$)/.test(rel); } });
+    // node_modules is read-only for a build and can be hundreds of MB, so the copy links to it instead of duplicating it.
+    await cp(p.root, work, { recursive: true, filter: (s) => { const rel = s.slice(p.root.length); return !/\/(out|cache|\.git)(\/|$)/.test(rel) && !/^\/(test|script|node_modules)(\/|$)/.test(rel); } });
+    if (existsSync(join(p.root, 'node_modules'))) await symlink(join(p.root, 'node_modules'), join(work, 'node_modules'), 'dir');
     for (const [k, v] of Object.entries(edits)) await writeFile(join(work, k), v);
     return await fn(work);
   } finally { await rm(work, { recursive: true, force: true }); }
