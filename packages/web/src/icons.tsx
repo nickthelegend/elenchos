@@ -1,12 +1,13 @@
-export const Logo = () => (
-  <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden><rect width="32" height="32" rx="7" fill="#121418" stroke="#23272e"/><path d="M10 10h12M10 16h8M10 22h12" stroke="#c6f24e" strokeWidth="2.2" strokeLinecap="round"/><circle cx="23.5" cy="20.5" r="4" fill="none" stroke="#c6f24e" strokeWidth="2"/><path d="M26.5 23.5 29 26" stroke="#c6f24e" strokeWidth="2.2" strokeLinecap="round"/></svg>
+// The Elenchos mark: the examiner's lens with one eye in it. Drawn in SVG so it is crisp at 16 px.
+export const Mark = ({ size = 28 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden>
+    <defs>
+      <linearGradient id="mk-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#8ea4ff" /><stop offset="1" stopColor="#3b55e6" /></linearGradient>
+    </defs>
+    <rect width="32" height="32" rx="9" fill="#101733" />
+    <rect x=".5" y=".5" width="31" height="31" rx="8.5" fill="none" stroke="rgba(169,184,255,.28)" />
+    <circle cx="14" cy="14" r="7.2" fill="none" stroke="url(#mk-g)" strokeWidth="2.6" />
+    <path d="M19.4 19.4 25 25" stroke="url(#mk-g)" strokeWidth="3" strokeLinecap="round" />
+    <circle cx="14" cy="14" r="2.4" fill="#e9edf7" />
+  </svg>
 );
-const S = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
-export const ToolIcon = ({ name }: { name: string }) => {
-  if (name === 'scan') return <svg viewBox="0 0 24 24" {...S} style={{ color: 'var(--lime)' }}><circle cx="11" cy="11" r="6"/><path d="m20 20-3.5-3.5"/></svg>;
-  if (name === 'forge') return <svg viewBox="0 0 24 24" {...S} style={{ color: 'var(--red)' }}><path d="M12 3v4M12 17v4M5 12H3M21 12h-2M6 6l2 2M16 16l2 2M6 18l2-2M16 8l2-2"/><circle cx="12" cy="12" r="3"/></svg>;
-  if (name === 'replay') return <svg viewBox="0 0 24 24" {...S} style={{ color: 'var(--cyan)' }}><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 4v4h4"/></svg>;
-  // a wrench, not a check mark: the tool card's status chip, not the icon, says whether the fix held
-  if (name === 'patch') return <svg viewBox="0 0 24 24" {...S} style={{ color: 'var(--amber)' }}><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3.6 17.4a1.4 1.4 0 0 0 2 2l5.7-5.7a4 4 0 0 0 5.4-5.4l-2.5 2.5-2-.5-.5-2z"/></svg>;
-  return null;
-};
