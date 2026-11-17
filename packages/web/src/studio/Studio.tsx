@@ -1,70 +1,80 @@
-// Elenchos Studio: an online auditor for contracts that trust zkVerify proofs. The layout follows AlgoCraft IDE
-// (activity bar, explorer, Monaco with tabs, terminal + agent chat underneath, a build-style panel on the right),
-// with the audit pipeline in place of build/deploy: scan → forge → ask zkVerify → verify the fix.
+// Elenchos Studio v2: an online auditor for contracts that trust zkVerify proofs. AlgoCraft IDE's layout (activity
+// bar, explorer, Monaco with tabs, terminal underneath, status bar) with the agent chat as the big right-hand panel and
+// the audit panel beside the terminal. Files come from the demo targets, your browser, a GitHub file, or a whole public
+// GitHub project connected on the server.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Editor, { DiffEditor, type Monaco } from '@monaco-editor/react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
-import { askZkVerify, forgeExploit, getTargets, investigate, scanSource, verifyFix, type AgentEvent, type Finding, type Ready, type ToolEvent, type Turn } from '../api.ts';
+import { askZkVerify, connectProject, fetchGithubFile, forgeExploit, getTargets, investigate, scanFile, scanProject, verifyFix,
+  type AgentEvent, type Finding, type ProjectInfo, type Ready, type Subject, type ToolEvent, type Turn } from '../api.ts';
 import { Mark } from '../icons.tsx';
-import { Markdown } from '../markdown.tsx';
 import { defineTheme } from './theme.ts';
 import { HOLES_REF, NEW_FILE_TEMPLATE } from './content.ts';
+import { Chat, type Command, type Entry } from './Chat.tsx';
+import { AuditPanel, type Verdict } from './AuditPanel.tsx';
 
-type File = { path: string; source: string; original: string; builtin: boolean; targetId?: string; blurb?: string };
+type File = { key: string; label: string; folder: string; source: string; original: string; kind: 'builtin' | 'local' | 'project'; targetId?: string; projectId?: string; rel?: string; blurb?: string; from?: string };
 type Line = { t: number; kind: 'cmd' | 'out' | 'ok' | 'err' | 'warn' | 'dim'; text: string };
-type Entry = { kind: 'user' | 'agent'; text: string } | { kind: 'tool'; event: ToolEvent } | { kind: 'review'; status: string; text: string };
 type Audit = { findings?: Finding[]; scannedSource?: string; ms?: number; error?: string; entries: Entry[]; patch?: ToolEvent; forge?: ToolEvent; replay?: ToolEvent; leaf?: string };
-type Section = 'explorer' | 'audit' | 'holes' | 'connections';
+type Section = 'explorer' | 'github' | 'holes' | 'connections';
+type Busy = null | 'scan' | 'agent' | 'tool';
 
-const art = (n: string) => `/art/${n}.webp`;
-const STORE = 'elenchos.studio.files.v1';
+const STORE = 'elenchos.studio.files.v2';
 const REPO = 'https://github.com/nickthelegend/elenchos';
 const READY_LABEL: Record<keyof Ready, string> = { anthropic: 'Claude agent', openai: 'Second opinion', rpc: 'Sepolia RPC', kurier: 'Kurier' };
 const READY_HINT: Record<keyof Ready, string> = {
-  anthropic: 'Drives the investigation. Needs ANTHROPIC_API_KEY on the server.',
+  anthropic: 'Drives the chat agent. Needs ANTHROPIC_API_KEY on the server.',
   openai: 'Optional independent review of each patch. Needs OPENAI_API_KEY.',
-  rpc: 'Reads zkVerify’s verifier on Sepolia. Public node built in.',
+  rpc: 'Reads zkVerify’s verifier on Sepolia through public nodes.',
   kurier: 'Submits proofs to zkVerify for the fork tests. Needs KURIER_API_KEY.',
 };
-const TOOL_ART: Record<string, string> = { scan: 'scanner', forge: 'forged-key', replay: 'merkle', patch: 'wrench' };
 const TOOL_NAME: Record<string, string> = { scan: 'Scan', forge: 'Forge exploit', replay: 'Ask zkVerify', patch: 'Verify fix' };
-const SEV_ORDER = { critical: 0, high: 1, medium: 2 } as const;
+const SEV = { critical: 0, high: 1, medium: 2 } as const;
+const AGENT_PROMPT: Record<string, string> = {
+  '/investigate': 'Find every hole, prove the impact, then propose and verify a fix.',
+  '/fix': 'Propose the smallest fix for every finding, then verify it with the patch tool. Do not delete or rename anything to hide a finding.',
+  '/explain': 'Explain each finding in plain words: what the hole is, how an attacker would use it, and the fix. Run the scan first if there are no findings yet.',
+};
 
-function loadUserFiles(): File[] {
-  try { const raw = localStorage.getItem(STORE); return raw ? (JSON.parse(raw) as File[]).filter((f) => f && typeof f.path === 'string' && typeof f.source === 'string') : []; } catch { return []; }
+function loadLocal(): File[] {
+  try { const raw = localStorage.getItem(STORE); return raw ? (JSON.parse(raw) as File[]).filter((f) => f && f.kind === 'local' && typeof f.source === 'string') : []; } catch { return []; }
 }
-function saveUserFiles(files: File[]) {
-  try { localStorage.setItem(STORE, JSON.stringify(files.filter((f) => !f.builtin))); } catch { /* storage unavailable: files live for this visit only */ }
-}
+function saveLocal(files: File[]) { try { localStorage.setItem(STORE, JSON.stringify(files.filter((f) => f.kind === 'local'))); } catch { /* storage unavailable: this visit only */ } }
 const base = (p: string) => p.split('/').pop() ?? p;
-const short = (h: unknown) => (typeof h === 'string' && h.length > 20 ? `${h.slice(0, 10)}…${h.slice(-6)}` : String(h));
 
 export function Studio() {
   const [files, setFiles] = useState<File[]>([]);
+  const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [ready, setReady] = useState<Ready | null>(null);
+  const [model, setModel] = useState('claude-sonnet-5-5');
+  const [runsPerHour, setRunsPerHour] = useState<number | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState<string[]>([]);
   const [active, setActive] = useState<string | null>(null);
   const [audits, setAudits] = useState<Record<string, Audit>>({});
-  const [term, setTerm] = useState<Line[]>([{ t: Date.now(), kind: 'dim', text: 'Elenchos Studio · scan, forge, ask zkVerify, verify the fix. Every result below is a real run.' }]);
+  const [term, setTerm] = useState<Line[]>([{ t: Date.now(), kind: 'dim', text: 'Elenchos Studio · scan, forge, ask zkVerify, verify the fix. Every line below is a real run.' }]);
   const [section, setSection] = useState<Section>('explorer');
   const [showSide, setShowSide] = useState(true);
-  const [showAudit, setShowAudit] = useState(true);
+  const [showChat, setShowChat] = useState(true);
   const [bottomTab, setBottomTab] = useState<'terminal' | 'problems'>('terminal');
   const [view, setView] = useState<'source' | 'diff'>('source');
-  const [busy, setBusy] = useState<null | 'scan' | 'agent' | 'tool'>(null);
-  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState<Busy>(null);
+  const [running, setRunning] = useState<string | null>(null);
   const [creating, setCreating] = useState<string | null>(null);
   const [cursor, setCursor] = useState({ ln: 1, col: 1 });
   const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 860px)').matches);
-  const [mpane, setMpane] = useState<'editor' | 'chat' | 'terminal' | 'audit'>('editor');
+  const [mpane, setMpane] = useState<'files' | 'editor' | 'chat' | 'terminal' | 'audit'>('editor');
+  const [ghUrl, setGhUrl] = useState('');
+  const [ghFile, setGhFile] = useState('');
+  const [connecting, setConnecting] = useState<{ url: string; since: number } | null>(null);
+  const [ghError, setGhError] = useState<string | null>(null);
+  const [, setTick] = useState(0);
   const abortRef = useRef<() => void>();
   const monacoRef = useRef<Monaco | null>(null);
   const editorRef = useRef<any>(null);
   const decoRef = useRef<any>(null);
   const termRef = useRef<HTMLDivElement>(null);
-  const chatRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { document.title = 'Studio · Elenchos'; }, []);
   useEffect(() => {
@@ -72,35 +82,35 @@ export function Studio() {
     const on = () => setNarrow(mq.matches);
     mq.addEventListener('change', on); return () => mq.removeEventListener('change', on);
   }, []);
+  useEffect(() => { if (!connecting) return; const t = setInterval(() => setTick((x) => x + 1), 1000); return () => clearInterval(t); }, [connecting]);
 
   const load = useCallback(() => {
     setLoading(true); setLoadError(null);
     getTargets().then((d) => {
-      const builtins: File[] = d.targets.map((t) => ({ path: `demo/${t.title}`, source: t.source, original: t.source, builtin: true, targetId: t.id, blurb: t.blurb }));
-      const user = loadUserFiles();
-      setFiles([...builtins, ...user]);
-      setReady(d.ready);
-      const first = builtins[0]?.path ?? user[0]?.path ?? null;
+      const builtins: File[] = d.targets.map((t) => ({ key: `demo/${t.title}`, label: t.title, folder: 'demo', source: t.source, original: t.source, kind: 'builtin', targetId: t.id, blurb: t.blurb }));
+      const local = loadLocal();
+      setFiles((fs) => [...builtins, ...local, ...fs.filter((f) => f.kind === 'project')]);
+      setReady(d.ready); if (d.model) setModel(d.model); setRunsPerHour(d.agentRunsPerHour ?? null);
+      const first = builtins[0]?.key ?? local[0]?.key ?? null;
       setOpen((o) => (o.length ? o : first ? [first] : []));
       setActive((a) => a ?? first);
     }).catch((e) => setLoadError(String(e?.message ?? e))).finally(() => setLoading(false));
   }, []);
   useEffect(load, [load]);
 
-  const file = files.find((f) => f.path === active) ?? null;
+  const file = files.find((f) => f.key === active) ?? null;
   const audit: Audit = (active && audits[active]) || { entries: [] };
-  const findings = useMemo(() => [...(audit.findings ?? [])].sort((a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity] || a.line - b.line), [audit.findings]);
+  const findings = useMemo(() => [...(audit.findings ?? [])].sort((a, b) => SEV[a.severity] - SEV[b.severity] || a.line - b.line), [audit.findings]);
   const stale = Boolean(file && audit.scannedSource !== undefined && audit.scannedSource !== file.source);
-  const allProblems = useMemo(() => Object.entries(audits).flatMap(([p, a]) => (a.findings ?? []).map((f) => ({ path: p, f }))), [audits]);
+  const allProblems = useMemo(() => Object.entries(audits).flatMap(([k, a]) => (a.scannedSource !== undefined && files.find((f) => f.key === k)?.source !== a.scannedSource ? [] : (a.findings ?? []).map((f) => ({ key: k, f })))), [audits, files]);
 
-  const log = (kind: Line['kind'], text: string) => setTerm((t) => [...t.slice(-400), { t: Date.now(), kind, text }]);
-  const patchAudit = (path: string, fn: (a: Audit) => Audit) => setAudits((m) => ({ ...m, [path]: fn(m[path] ?? { entries: [] }) }));
+  const log = (kind: Line['kind'], text: string) => setTerm((t) => [...t.slice(-500), { t: Date.now(), kind, text }]);
+  const patchAudit = (key: string, fn: (a: Audit) => Audit) => setAudits((m) => ({ ...m, [key]: fn(m[key] ?? { entries: [] }) }));
+  const push = (key: string, e: Entry) => patchAudit(key, (a) => ({ ...a, entries: [...a.entries, e] }));
+  useEffect(() => { termRef.current?.scrollTo({ top: termRef.current.scrollHeight }); }, [term, bottomTab]);
+  useEffect(() => { setView('source'); }, [active]);
 
-  useEffect(() => { termRef.current?.scrollTo({ top: termRef.current.scrollHeight }); }, [term]);
-  useEffect(() => { if (audit.entries.length) chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight, behavior: 'smooth' }); }, [audit.entries.length, audit.entries[audit.entries.length - 1]]);
-  useEffect(() => { setView(audit.patch?.detail?.patchedSource ? 'diff' : 'source'); }, [active, audit.patch]);
-
-  // Findings → Monaco markers (Problems-style squiggles) + whole-line and gutter decorations.
+  // Findings → Monaco markers + whole-line and gutter decorations.
   useEffect(() => {
     const m = monacoRef.current; const ed = editorRef.current;
     if (!m || !ed || view !== 'source') return;
@@ -114,81 +124,140 @@ export function Studio() {
     decoRef.current?.clear();
     decoRef.current = ed.createDecorationsCollection(list.map((f) => ({
       range: new m.Range(f.line, 1, f.line, 1),
-      options: { isWholeLine: true, className: `ln-${f.severity}`, glyphMarginClassName: `gl-${f.severity}`, glyphMarginHoverMessage: { value: `**${f.rule} · ${f.severity}** ${f.title}` },
+      options: { isWholeLine: true, className: `ln-${f.severity}`, glyphMarginClassName: `codicon codicon-${f.severity === 'medium' ? 'warning' : 'error'} gl-${f.severity}`, glyphMarginHoverMessage: { value: `**${f.rule} · ${f.severity}** ${f.title}` },
         after: { content: `  ${f.rule} · ${f.title}`, inlineClassName: `ln-note ln-note-${f.severity}` } },
     })));
   }, [findings, stale, view, active]);
 
-  function openFile(path: string) { setOpen((o) => (o.includes(path) ? o : [...o, path])); setActive(path); if (narrow) setMpane('editor'); }
-  function closeTab(path: string) {
-    setOpen((o) => { const n = o.filter((p) => p !== path); if (active === path) setActive(n[n.length - 1] ?? null); return n; });
+  const projectOf = (f: File) => projects.find((p) => p.id === f.projectId);
+  const editsFor = (projectId: string) => Object.fromEntries(files.filter((x) => x.projectId === projectId && x.source !== x.original).map((x) => [x.rel!, x.source]));
+  function subjectOf(f: File): Subject {
+    if (f.kind === 'project') return { projectId: f.projectId!, path: f.rel!, edits: editsFor(f.projectId!) };
+    if (f.kind === 'builtin' && f.source === f.original && f.targetId) return { targetId: f.targetId };
+    return { name: f.label, source: f.source };
   }
+
+  function openFile(key: string) { setOpen((o) => (o.includes(key) ? o : [...o, key])); setActive(key); if (narrow) setMpane('editor'); }
+  function closeTab(key: string) { setOpen((o) => { const n = o.filter((p) => p !== key); if (active === key) setActive(n[n.length - 1] ?? null); return n; }); }
   function edit(source: string) {
     if (!file) return;
-    setFiles((fs) => { const n = fs.map((f) => (f.path === file.path ? { ...f, source } : f)); saveUserFiles(n); return n; });
+    setFiles((fs) => { const n = fs.map((f) => (f.key === file.key ? { ...f, source } : f)); saveLocal(n); return n; });
   }
-  function createFile(raw: string) {
-    const name = raw.trim().replace(/\.sol$/i, '') + '.sol';
-    if (!/^[A-Za-z_][A-Za-z0-9_]{0,47}\.sol$/.test(name)) { log('err', `Can't create "${raw}": use letters, digits and underscores, like MyConsumer.sol`); return; }
-    const path = `my/${name}`;
-    if (files.some((f) => f.path === path)) { openFile(path); setCreating(null); return; }
-    const src = NEW_FILE_TEMPLATE(name.replace(/\.sol$/, ''));
-    setFiles((fs) => { const n = [...fs, { path, source: src, original: src, builtin: false }]; saveUserFiles(n); return n; });
-    setCreating(null); openFile(path); log('dim', `created ${path}`);
+  function addLocal(name: string, source: string, from?: string) {
+    const label = name.endsWith('.sol') ? name : `${name}.sol`;
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,47}\.sol$/.test(label)) { log('err', `Can't create "${name}": use letters, digits and underscores, like MyConsumer.sol`); return null; }
+    const key = `my/${label}`;
+    setFiles((fs) => { const n = [...fs.filter((f) => f.key !== key), { key, label, folder: 'my', source, original: source, kind: 'local' as const, from }]; saveLocal(n); return n; });
+    setAudits((m) => { const n = { ...m }; delete n[key]; return n; });
+    openFile(key); return key;
   }
-  function deleteFile(path: string) {
-    setFiles((fs) => { const n = fs.filter((f) => f.path !== path); saveUserFiles(n); return n; });
-    closeTab(path); setAudits((m) => { const n = { ...m }; delete n[path]; return n; });
+  function createFile(raw: string) { const name = raw.trim().replace(/\.sol$/i, ''); if (!name) { setCreating(null); return; } if (addLocal(`${name}.sol`, NEW_FILE_TEMPLATE(name))) { setCreating(null); log('dim', `created my/${name}.sol`); } }
+  function deleteFile(key: string) {
+    setFiles((fs) => { const n = fs.filter((f) => f.key !== key); saveLocal(n); return n; });
+    closeTab(key); setAudits((m) => { const n = { ...m }; delete n[key]; return n; });
   }
-  function resetFile() { if (file) edit(file.original); }
 
-  async function runScan() {
-    if (!file || busy) return;
-    const f = file; setBusy('scan'); setBottomTab('terminal');
-    log('cmd', `elenchos scan ${f.path}`);
+  async function importGithubFile() {
+    setGhError(null);
     try {
-      const r = await scanSource(base(f.path), f.source);
-      patchAudit(f.path, (a) => ({ ...a, findings: r.findings, scannedSource: f.source, ms: r.ms, error: undefined, patch: undefined }));
-      for (const x of r.findings) log(x.severity === 'medium' ? 'warn' : 'err', `[${x.rule.padEnd(3)} ${x.severity.padEnd(8)}] ${x.contract}.${x.function.split('(')[0]}(…)  ${base(f.path)}:${x.line}  ${x.title}`);
+      const r = await fetchGithubFile(ghFile);
+      addLocal(r.name, r.source, r.from); setGhFile('');
+      log('ok', `imported ${r.name} from ${r.from}`);
+      setSection('explorer');
+    } catch (e) { setGhError(String((e as Error).message ?? e)); }
+  }
+  async function connect(url = ghUrl) {
+    if (!url.trim() || connecting) return;
+    setGhError(null); setConnecting({ url, since: Date.now() });
+    log('cmd', `elenchos connect ${url.trim()}`);
+    try {
+      const p = await connectProject(url.trim());
+      const old = projects.filter((x) => x.repo === p.repo).map((x) => x.id);
+      setProjects((ps) => [...ps.filter((x) => x.repo !== p.repo), p]);
+      const pf: File[] = p.files.map((f) => ({ key: `gh/${p.id}/${f.path}`, label: base(f.path), folder: p.repo, source: f.source, original: f.source, kind: 'project', projectId: p.id, rel: f.path }));
+      setFiles((fs) => [...fs.filter((f) => !(f.kind === 'project' && old.includes(f.projectId!))), ...pf]);
+      log('ok', `connected ${p.repo} @ ${p.sha.slice(0, 7)} · ${p.kind} · ${p.files.length} contracts · ${p.deps} · ${(p.ms / 1000).toFixed(1)} s`);
+      setGhUrl(''); setSection('explorer');
+      if (pf[0]) openFile(pf[0].key);
+    } catch (e) { const msg = String((e as Error).message ?? e); setGhError(msg); log('err', msg); }
+    finally { setConnecting(null); }
+  }
+
+  async function runScan(fromChat = false) {
+    if (!file || busy) return;
+    const f = file; setBusy('scan'); setRunning('scan'); setBottomTab('terminal');
+    if (fromChat) push(f.key, { kind: 'user', text: '/audit' });
+    log('cmd', `elenchos scan ${f.kind === 'project' ? `${projectOf(f)?.repo}/${f.rel}` : f.key}`);
+    try {
+      const r = await scanFile(subjectOf(f));
+      const crit = r.findings.filter((x) => x.severity === 'critical').length;
+      const ev: ToolEvent = { tool: 'scan', status: 'ok', summary: r.findings.length ? `${r.findings.length} finding${r.findings.length === 1 ? '' : 's'}, ${crit} critical · ${r.ms} ms` : `no findings · ${r.ms} ms`, detail: r.findings };
+      patchAudit(f.key, (a) => ({ ...a, findings: r.findings, scannedSource: f.source, ms: r.ms, error: undefined, patch: undefined, entries: fromChat ? [...a.entries, { kind: 'tool', event: ev, direct: true }] : a.entries }));
+      for (const x of r.findings) log(x.severity === 'medium' ? 'warn' : 'err', `[${x.rule.padEnd(3)} ${x.severity.padEnd(8)}] ${x.contract}.${x.function.split('(')[0]}(…)  ${f.label}:${x.line}  ${x.title}`);
       log(r.findings.length ? 'out' : 'ok', `${r.findings.length} finding${r.findings.length === 1 ? '' : 's'} · ${r.ms} ms · Slither + 5 Elenchos detectors`);
-      if (r.findings.length) setBottomTab('problems');
     } catch (e) {
       const msg = String((e as Error).message ?? e);
-      patchAudit(f.path, (a) => ({ ...a, error: msg, findings: undefined, scannedSource: undefined }));
+      patchAudit(f.key, (a) => ({ ...a, error: msg, findings: undefined, scannedSource: undefined, entries: fromChat ? [...a.entries, { kind: 'error', text: msg }] : a.entries }));
       log('err', msg);
-    } finally { setBusy(null); }
+      if (f.kind === 'local' && /not found|File not found/.test(msg)) log('warn', 'Its imports do not resolve on their own. Connect the whole repository in the GitHub view so remapped imports work.');
+    } finally { setBusy(null); setRunning(null); }
+  }
+
+  async function auditProject(p: ProjectInfo) {
+    if (busy) return;
+    setBusy('scan'); setRunning('scan'); setBottomTab('terminal');
+    log('cmd', `elenchos scan ${p.repo} (whole project)`);
+    try {
+      const r = await scanProject(p.id, editsFor(p.id));
+      const byFile = new Map<string, Finding[]>();
+      for (const x of r.findings) byFile.set(x.file, [...(byFile.get(x.file) ?? []), x]);
+      setAudits((m) => {
+        const n = { ...m };
+        for (const f of files.filter((x) => x.projectId === p.id)) n[f.key] = { ...(n[f.key] ?? { entries: [] }), findings: byFile.get(f.rel!) ?? [], scannedSource: f.source, ms: r.ms, error: undefined };
+        return n;
+      });
+      for (const x of r.findings) log(x.severity === 'medium' ? 'warn' : 'err', `[${x.rule.padEnd(3)} ${x.severity.padEnd(8)}] ${x.contract}.${x.function.split('(')[0]}(…)  ${x.file}:${x.line}  ${x.title}`);
+      log(r.findings.length ? 'out' : 'ok', `${p.repo}: ${r.findings.length} finding${r.findings.length === 1 ? '' : 's'} in ${byFile.size} file${byFile.size === 1 ? '' : 's'} · ${r.ms} ms`);
+      if (r.findings.length) { setBottomTab('problems'); const first = files.find((f) => f.projectId === p.id && f.rel === r.findings[0].file); if (first) openFile(first.key); }
+    } catch (e) { log('err', String((e as Error).message ?? e)); }
+    finally { setBusy(null); setRunning(null); }
   }
 
   // A pipeline step run directly (no model): the result lands in the terminal, the chat thread and the audit panel.
-  async function step(kind: 'forge' | 'replay' | 'verify') {
+  async function step(kind: 'forge' | 'replay' | 'verify', fromChat = false) {
     if (!file || busy) return;
     const f = file; setBusy('tool'); setBottomTab('terminal');
+    if (fromChat) push(f.key, { kind: 'user', text: kind === 'forge' ? '/forge' : kind === 'replay' ? '/zkverify' : '/verify' });
     const record = (t: ToolEvent, extra: Partial<Audit> = {}) => {
       log(t.status === 'ok' ? 'ok' : t.status === 'error' ? 'err' : 'warn', `› ${TOOL_NAME[t.tool] ?? t.tool}: ${t.summary}`);
-      patchAudit(f.path, (a) => ({ ...a, ...extra, entries: [...a.entries, { kind: 'tool', event: t }] }));
+      patchAudit(f.key, (a) => ({ ...a, ...extra, entries: [...a.entries, { kind: 'tool', event: t, direct: true }] }));
     };
     try {
-      if (kind === 'forge' || (kind === 'replay' && !audits[f.path]?.leaf)) {
-        log('cmd', 'elenchos forge --attacker-circuit --mint 1000000');
+      if (kind === 'forge' || (kind === 'replay' && !audits[f.key]?.leaf)) {
+        setRunning('forge'); log('cmd', 'elenchos forge --attacker-circuit --mint 1000000');
         const r = await forgeExploit();
         record(r.event, { forge: r.event, leaf: r.leaf ?? undefined });
         if (kind === 'replay') {
           if (!r.leaf) throw new Error('The forge step returned no leaf, so there is nothing to ask zkVerify about.');
-          log('cmd', `elenchos replay ${r.leaf.slice(0, 12)}… --verifier sepolia`);
+          setRunning('replay'); log('cmd', `elenchos replay ${r.leaf.slice(0, 12)}… --verifier sepolia`);
           const q = await askZkVerify(r.leaf); record(q.event, { replay: q.event });
         }
       } else if (kind === 'replay') {
-        const leaf = audits[f.path]!.leaf!;
-        log('cmd', `elenchos replay ${leaf.slice(0, 12)}… --verifier sepolia`);
+        const leaf = audits[f.key]!.leaf!;
+        setRunning('replay'); log('cmd', `elenchos replay ${leaf.slice(0, 12)}… --verifier sepolia`);
         const q = await askZkVerify(leaf); record(q.event, { replay: q.event });
       } else {
-        if (f.source === f.original) { log('warn', 'Verify fix checks your edited file against the original. Edit the contract (or ask the agent to propose a fix) first.'); return; }
-        log('cmd', `elenchos verify ${f.path}  (compile + re-scan + anti-cheat)`);
-        const r = await verifyFix(base(f.path), f.original, f.source);
-        record(r.event, { patch: r.event });
+        if (f.source === f.original) {
+          const msg = 'Verify checks your edited file against the original. Edit the contract (or run /fix) first.';
+          log('warn', msg); if (fromChat) push(f.key, { kind: 'error', text: msg }); return;
+        }
+        setRunning('patch'); log('cmd', `elenchos verify ${f.label}  (compile + re-scan + anti-cheat)`);
+        const r = await verifyFix(subjectOf(f), f.original, f.source);
+        const ev = { ...r.event, detail: { ...r.event.detail, patchedSource: f.source } };
+        record(ev, { patch: ev });
       }
-    } catch (e) { log('err', String((e as Error).message ?? e)); }
-    finally { setBusy(null); }
+    } catch (e) { const msg = String((e as Error).message ?? e); log('err', msg); push(f.key, { kind: 'error', text: msg }); }
+    finally { setBusy(null); setRunning(null); }
   }
 
   function history(a: Audit): Turn[] {
@@ -201,143 +270,170 @@ export function Studio() {
         const found = e.event.tool === 'scan' && Array.isArray(e.event.detail) ? (e.event.detail as Finding[]).map((f) => `\n  - ${f.rule} ${f.severity} in ${f.function} at line ${f.line}: ${f.title}`).join('') : '';
         const src = e.event.tool === 'patch' && e.event.detail?.patchedSource ? `\nThe exact source submitted to the patch tool:\n\`\`\`solidity\n${e.event.detail.patchedSource}\n\`\`\`` : '';
         add('assistant', `[${e.event.tool} → ${e.event.status}] ${e.event.summary}${found}${src}`);
-      } else add('assistant', `[second opinion → ${e.status}] ${e.text}`);
+      } else if (e.kind === 'review') add('assistant', `[second opinion → ${e.status}] ${e.text}`);
+      else add('assistant', `[error] ${e.text}`);
     }
+    if (turns[0]?.role === 'assistant') turns.unshift({ role: 'user', text: '(earlier commands)' });
+    if (turns[turns.length - 1]?.role === 'user') turns.pop();
     return turns.slice(-20).map((t) => ({ ...t, text: t.text.slice(-16000) }));
   }
 
-  function ask(prompt: string) {
+  function ask(prompt: string, shown = prompt) {
     if (!file || busy || !prompt.trim()) return;
-    if (ready && !ready.anthropic) { log('warn', 'Setup required: the agent needs ANTHROPIC_API_KEY on the server. The scan button still works without it.'); return; }
-    const f = file; const past = history(audits[f.path] ?? { entries: [] });
-    const subject = f.builtin && f.source === f.original && f.targetId ? { targetId: f.targetId } : { name: base(f.path), source: f.source };
-    patchAudit(f.path, (a) => ({ ...a, entries: [...a.entries, { kind: 'user', text: prompt }] }));
+    if (ready && !ready.anthropic) { push(file.key, { kind: 'error', text: 'Setup required: the agent needs ANTHROPIC_API_KEY on the server. The no-model commands still work.' }); return; }
+    const f = file; const past = history(audits[f.key] ?? { entries: [] });
+    push(f.key, { kind: 'user', text: shown });
     setBusy('agent'); if (narrow) setMpane('chat');
-    log('cmd', `elenchos agent "${prompt.length > 70 ? `${prompt.slice(0, 70)}…` : prompt}"  (${f.path})`);
+    log('cmd', `elenchos agent "${shown.length > 70 ? `${shown.slice(0, 70)}…` : shown}"  (${f.label})`);
     let buf = '';
     const onEvent = (ev: AgentEvent) => {
       if (ev.type === 'text') {
         buf += ev.text;
-        patchAudit(f.path, (a) => { const en = [...a.entries]; const l = en[en.length - 1]; if (l?.kind === 'agent') en[en.length - 1] = { kind: 'agent', text: buf }; else en.push({ kind: 'agent', text: buf }); return { ...a, entries: en }; });
+        patchAudit(f.key, (a) => { const en = [...a.entries]; const l = en[en.length - 1]; if (l?.kind === 'agent') en[en.length - 1] = { kind: 'agent', text: buf }; else en.push({ kind: 'agent', text: buf }); return { ...a, entries: en }; });
       } else if (ev.type === 'tool') {
-        buf = '';
-        const t = ev.event;
+        buf = ''; const t = ev.event;
         log(t.status === 'ok' ? 'ok' : t.status === 'error' ? 'err' : t.status === 'setup' ? 'warn' : 'out', `› ${TOOL_NAME[t.tool] ?? t.tool}: ${t.summary}`);
-        patchAudit(f.path, (a) => ({
+        patchAudit(f.key, (a) => ({
           ...a, entries: [...a.entries, { kind: 'tool', event: t }],
           ...(t.tool === 'scan' && Array.isArray(t.detail) ? { findings: t.detail as Finding[], scannedSource: f.source } : {}),
           ...(t.tool === 'patch' && t.detail?.patchedSource ? { patch: t } : {}),
-          ...(t.tool === 'forge' ? { forge: t } : {}),
+          ...(t.tool === 'forge' ? { forge: t, leaf: t.detail?.leaf ?? a.leaf } : {}),
           ...(t.tool === 'replay' ? { replay: t } : {}),
         }));
-      } else if (ev.type === 'review') {
-        patchAudit(f.path, (a) => ({ ...a, entries: [...a.entries, { kind: 'review', status: ev.status, text: ev.text }] }));
-      } else if (ev.type === 'error') {
-        buf = ''; log('err', ev.message);
-        patchAudit(f.path, (a) => ({ ...a, entries: [...a.entries, { kind: 'agent', text: `⚠ ${ev.message}` }] }));
-      }
+      } else if (ev.type === 'review') push(f.key, { kind: 'review', status: ev.status, text: ev.text });
+      else if (ev.type === 'error') { buf = ''; log('err', ev.message); push(f.key, { kind: 'error', text: ev.message }); }
     };
-    abortRef.current = investigate(subject, prompt, past, onEvent, () => { abortRef.current = undefined; setBusy(null); log('dim', 'agent finished'); });
+    abortRef.current = investigate(subjectOf(f), prompt, past, onEvent, () => { abortRef.current = undefined; setBusy(null); setRunning(null); log('dim', 'agent finished'); });
   }
-  function stop() {
-    if (!abortRef.current || !file) return;
-    abortRef.current(); log('warn', 'stopped by you');
+  function command(c: Command) {
+    if (c.cmd === '/audit') return runScan(true);
+    if (c.cmd === '/forge') return step('forge', true);
+    if (c.cmd === '/zkverify') return step('replay', true);
+    if (c.cmd === '/verify') return step('verify', true);
+    ask(AGENT_PROMPT[c.cmd], c.cmd);
   }
-  function reveal(path: string, line: number) {
-    openFile(path); setView('source');
-    setTimeout(() => { const ed = editorRef.current; if (!ed) return; ed.revealLineInCenter(line); ed.setPosition({ lineNumber: line, column: 1 }); ed.focus(); }, 60);
+  function stop() { if (!abortRef.current) return; abortRef.current(); log('warn', 'stopped by you'); }
+  function reveal(key: string, line: number) {
+    openFile(key); setView('source');
+    setTimeout(() => { const ed = editorRef.current; if (!ed) return; ed.revealLineInCenter(line); ed.setPosition({ lineNumber: line, column: 1 }); ed.focus(); }, 80);
   }
   function applyPatch() {
     const src = audit.patch?.detail?.patchedSource; if (!src || !file) return;
-    edit(src); setView('source'); log('ok', `applied the verified fix to ${file.path}; run the scan again to confirm`);
+    edit(src); setView('source'); log('ok', `applied the fix to ${file.label}; run the audit again to confirm`);
   }
 
-  const verdict = audit.patch?.detail?.verified ? { cls: 'safe', obj: 'seal', big: 'Fix verified', sub: 'Compiles, the re-scan is clean, and the receipt check is still there.' }
-    : audit.patch ? { cls: 'vuln', obj: 'cracked', big: 'Fix rejected', sub: audit.patch.summary }
-    : audit.error ? { cls: 'warn', obj: 'cracked', big: 'Scan failed', sub: audit.error }
-    : stale ? { cls: 'pending', obj: 'scanner', big: 'Edited since the scan', sub: 'Run the audit again to refresh the findings.' }
-    : findings.some((f) => f.severity === 'critical') ? { cls: 'vuln', obj: 'forged-key', big: 'Exploitable', sub: 'A critical hole lets an attacker’s proof through.' }
-    : findings.length ? { cls: 'warn', obj: 'receipt', big: `${findings.length} to fix`, sub: 'No critical hole, but these need a fix.' }
-    : audit.findings ? { cls: 'safe', obj: 'shield', big: 'No holes found', sub: 'None of E1, E1b, E3, E4, E6.' }
-    : { cls: 'pending', obj: 'empty', big: 'Not audited yet', sub: 'Press Run audit, or ask the agent.' };
-  const counts = { critical: findings.filter((f) => f.severity === 'critical').length, high: findings.filter((f) => f.severity === 'high').length, medium: findings.filter((f) => f.severity === 'medium').length };
+  const verdict: Verdict = audit.patch?.detail?.verified ? { cls: 'safe', icon: 'verified-filled', big: 'Fix verified', sub: 'It compiles, the re-scan is clean, and the receipt check is still there.' }
+    : audit.patch ? { cls: 'vuln', icon: 'error', big: 'Fix rejected', sub: audit.patch.summary }
+    : audit.error ? { cls: 'warn', icon: 'warning', big: 'Audit failed', sub: audit.error }
+    : stale ? { cls: 'pending', icon: 'history', big: 'Edited since the audit', sub: 'Run the audit again to refresh the findings.' }
+    : findings.some((f) => f.severity === 'critical') ? { cls: 'vuln', icon: 'error', big: 'Exploitable', sub: 'A critical hole lets an attacker’s proof through.' }
+    : findings.length ? { cls: 'warn', icon: 'warning', big: `${findings.length} to fix`, sub: 'No critical hole, but these need a fix.' }
+    : audit.findings ? { cls: 'safe', icon: 'pass-filled', big: 'No holes found', sub: 'None of E1, E1b, E3, E4, E6.' }
+    : { cls: 'pending', icon: 'circle-large', big: 'Not audited yet', sub: 'Run audit, type /audit in the chat, or ask Elenchos.' };
   const steps = ['scan', 'forge', 'replay', 'patch'].map((t) => {
     const ev = [...audit.entries].reverse().find((e) => e.kind === 'tool' && e.event.tool === t) as { event: ToolEvent } | undefined;
-    const st = t === 'scan' && !ev && audit.findings ? 'ok' : ev?.event.status;
-    return { t, st };
+    return { t, st: t === 'scan' && audit.findings ? 'ok' as const : t === 'patch' && audit.patch ? audit.patch.status : t === 'forge' && audit.forge ? audit.forge.status : t === 'replay' && audit.replay ? audit.replay.status : ev?.event.status };
   });
 
   if (loadError) return <Offline message={loadError} onRetry={load} />;
 
   /* ---------- pieces ---------- */
+  const actionsDisabled = !file || Boolean(busy);
   const toolbar = (
     <header className="sd-toolbar">
-      <a className="sd-brand" href="#/" aria-label="Elenchos home"><Mark size={24} /><span>Elenchos</span><em>Studio</em></a>
-      {narrow && (
-        <select className="sd-filesel" value={active ?? ''} onChange={(e) => openFile(e.target.value)} aria-label="File">
-          {files.map((f) => <option key={f.path} value={f.path}>{f.path}</option>)}
-        </select>
-      )}
+      <a className="sd-brand" href="#/" aria-label="Elenchos home"><Mark size={22} /><span>Elenchos</span><em>Studio</em></a>
       <div className="sd-actions">
-        <button className="sd-btn primary" onClick={runScan} disabled={!file || Boolean(busy)} title="Slither + the five Elenchos detectors. Deterministic, no model.">
-          {busy === 'scan' ? <span className="spin" /> : <Ico n="play" />}<span>Run audit</span>
-        </button>
-        <button className="sd-btn" onClick={() => step('forge')} disabled={!file || Boolean(busy)} title="A real Groth16 proof from an attacker circuit, verified locally, with its zkVerify leaf. No model."><Ico n="key" /><span>Forge exploit</span></button>
-        <button className="sd-btn hide-md" onClick={() => step('replay')} disabled={!file || Boolean(busy)} title="Reads zkVerify's real verifier on Sepolia for the forged leaf. No model."><Ico n="tree" /><span>Ask zkVerify</span></button>
-        <button className="sd-btn hide-md" onClick={() => step('verify')} disabled={!file || Boolean(busy)} title="Compiles your edited file, re-scans it and rejects fixes that cheat. No model."><Ico n="wrench" /><span>Verify fix</span></button>
-        {busy === 'agent' && <button className="sd-btn danger" onClick={stop}><Ico n="stop" /><span>Stop</span></button>}
+        <button className="sd-btn primary" onClick={() => runScan()} disabled={actionsDisabled} title="Slither + the five Elenchos detectors. No model."><i className={`codicon codicon-${busy === 'scan' ? 'loading codicon-modifier-spin' : 'play'}`} /><span>Run audit</span></button>
+        <button className="sd-btn" onClick={() => step('forge')} disabled={actionsDisabled} title="A real Groth16 proof from an attacker circuit, with its zkVerify leaf. No model."><i className="codicon codicon-key" /><span>Forge exploit</span></button>
+        <button className="sd-btn hide-md" onClick={() => step('replay')} disabled={actionsDisabled} title="Reads zkVerify's real verifier on Sepolia for the forged leaf. No model."><i className="codicon codicon-type-hierarchy" /><span>Ask zkVerify</span></button>
+        <button className="sd-btn hide-md" onClick={() => step('verify')} disabled={actionsDisabled} title="Compiles your edited file, re-scans it and rejects fixes that cheat. No model."><i className="codicon codicon-tools" /><span>Verify fix</span></button>
         {busy && <span className="sd-busy"><span className="pulse" />{busy === 'scan' ? 'Scanning…' : busy === 'tool' ? 'Running…' : 'Agent working…'}</span>}
       </div>
       <div className="sd-right">
-        <a className="sd-link hide-md" href={REPO} target="_blank" rel="noreferrer">GitHub</a>
+        <button className="sd-link hide-md" onClick={() => { setSection('github'); setShowSide(true); if (narrow) setMpane('files'); }}><i className="codicon codicon-github" />Connect repo</button>
+        <a className="sd-link hide-md" href={REPO} target="_blank" rel="noreferrer"><i className="codicon codicon-link-external" />Source</a>
+        {!narrow && <button className={`ic${showChat ? ' on' : ''}`} aria-label="Toggle chat" title="Toggle chat" onClick={() => setShowChat(!showChat)}><i className="codicon codicon-layout-sidebar-right" /></button>}
       </div>
     </header>
   );
 
   const activity = (
     <nav className="sd-activity" aria-label="Views">
-      {([['explorer', 'files', 'Explorer'], ['audit', 'shield', 'Audit'], ['holes', 'book', 'The five holes'], ['connections', 'plug', 'Connections']] as const).map(([id, ic, label]) => (
+      {([['explorer', 'files', 'Explorer'], ['github', 'github', 'GitHub'], ['holes', 'book', 'The five holes'], ['connections', 'plug', 'Connections']] as const).map(([id, ic, label]) => (
         <button key={id} className={section === id && showSide ? 'on' : ''} aria-label={label} title={label}
           onClick={() => { if (section === id) setShowSide(!showSide); else { setSection(id); setShowSide(true); } }}>
-          <Ico n={ic} size={22} />
-          {id === 'audit' && allProblems.length > 0 && <span className="badge">{allProblems.length}</span>}
+          <i className={`codicon codicon-${ic}`} />
+          {id === 'explorer' && allProblems.length > 0 && <span className="badge">{allProblems.length}</span>}
         </button>
       ))}
-      <div className="grow" />
-      <button className={showAudit ? 'on' : ''} aria-label="Toggle audit panel" title="Audit panel" onClick={() => setShowAudit(!showAudit)}><Ico n="panel" size={22} /></button>
     </nav>
   );
 
+  const projectFolders = projects.map((p) => ({ p, tree: buildTree(files.filter((f) => f.projectId === p.id)) }));
+
   const sidebar = (
     <div className="sd-side">
+      {narrow && (
+        <div className="sd-msect" role="tablist">
+          {([['explorer', 'Files'], ['github', 'GitHub'], ['holes', 'Holes'], ['connections', 'Setup']] as const).map(([id, l]) => <button key={id} role="tab" aria-selected={section === id} onClick={() => setSection(id)}>{l}</button>)}
+        </div>
+      )}
       {section === 'explorer' && (
         <>
-          <div className="sd-head"><span>Explorer</span><button className="ic" aria-label="New file" title="New file" onClick={() => setCreating('')}><Ico n="plus" /></button></div>
+          <div className="sd-head"><span>Explorer</span>
+            <span className="acts">
+              <button className="ic" aria-label="New file" title="New file" onClick={() => setCreating('')}><i className="codicon codicon-new-file" /></button>
+              <button className="ic" aria-label="Import from GitHub" title="Import from GitHub" onClick={() => setSection('github')}><i className="codicon codicon-repo-clone" /></button>
+            </span>
+          </div>
           <div className="sd-tree">
             <Folder name="demo" hint="built-in targets">
-              {files.filter((f) => f.builtin).map((f) => <FileRow key={f.path} f={f} active={active === f.path} audit={audits[f.path]} onOpen={() => openFile(f.path)} />)}
+              {files.filter((f) => f.kind === 'builtin').map((f) => <FileRow key={f.key} f={f} active={active === f.key} audit={audits[f.key]} onOpen={() => openFile(f.key)} />)}
             </Folder>
             <Folder name="my" hint="saved in this browser">
-              {files.filter((f) => !f.builtin).map((f) => <FileRow key={f.path} f={f} active={active === f.path} audit={audits[f.path]} onOpen={() => openFile(f.path)} onDelete={() => deleteFile(f.path)} />)}
+              {files.filter((f) => f.kind === 'local').map((f) => <FileRow key={f.key} f={f} active={active === f.key} audit={audits[f.key]} onOpen={() => openFile(f.key)} onDelete={() => deleteFile(f.key)} />)}
               {creating !== null
                 ? <form className="sd-new" onSubmit={(e) => { e.preventDefault(); createFile(creating); }}>
                     <input autoFocus value={creating} onChange={(e) => setCreating(e.target.value)} placeholder="MyConsumer.sol" aria-label="New file name" onBlur={() => !creating && setCreating(null)} onKeyDown={(e) => e.key === 'Escape' && setCreating(null)} />
                   </form>
-                : files.every((f) => f.builtin) && <button className="sd-empty-new" onClick={() => setCreating('')}><Ico n="plus" />New file, or paste your contract</button>}
+                : !files.some((f) => f.kind === 'local') && <button className="sd-empty-new" onClick={() => setCreating('')}><i className="codicon codicon-add" />New file, or paste your contract</button>}
             </Folder>
+            {projectFolders.map(({ p, tree }) => (
+              <Folder key={p.id} name={p.repo} hint={`${p.sha.slice(0, 7)} · ${p.kind}`} icon="repo" action={<button className="ic" title={`Audit all of ${p.repo}`} aria-label={`Audit all of ${p.repo}`} onClick={() => auditProject(p)} disabled={Boolean(busy)}><i className="codicon codicon-run-all" /></button>}>
+                <Tree node={tree} depth={0} active={active} audits={audits} onOpen={openFile} />
+              </Folder>
+            ))}
+            {!projects.length && <button className="sd-empty-new gh" onClick={() => setSection('github')}><i className="codicon codicon-github" />Connect a GitHub repository</button>}
           </div>
-          {file?.blurb && <div className="sd-blurb"><b>{base(file.path)}</b>{file.blurb}</div>}
+          {file?.blurb && <div className="sd-blurb"><b>{file.label}</b>{file.blurb}</div>}
+          {file?.kind === 'project' && <div className="sd-blurb"><b>{projectOf(file)?.repo}</b>{file.rel} · cloned at {projectOf(file)?.sha.slice(0, 7)}. Edits stay in this browser; audits run on a fresh copy.</div>}
         </>
       )}
-      {section === 'audit' && (
+      {section === 'github' && (
         <>
-          <div className="sd-head"><span>Audit · all files</span></div>
+          <div className="sd-head"><span>GitHub</span></div>
           <div className="sd-list">
-            {allProblems.length === 0 && <div className="sd-none"><img src={art('empty')} alt="" width={72} height={72} />No findings yet. Open a file and press <b>Run audit</b>.</div>}
-            {allProblems.map(({ path, f }, i) => (
-              <button key={i} className="sd-prob" onClick={() => reveal(path, f.line)}>
-                <span className={`sev-dot ${f.severity}`} /><span className="pr-main"><b>{f.rule}</b> {f.title}<em>{base(path)}:{f.line}</em></span>
-              </button>
+            <form className="gh-card" onSubmit={(e) => { e.preventDefault(); connect(); }}>
+              <b><i className="codicon codicon-repo" />Connect a repository</b>
+              <p>Clones a public repo on the server with its submodules, lists its contracts and audits them with imports resolved.</p>
+              <input value={ghUrl} onChange={(e) => setGhUrl(e.target.value)} placeholder="github.com/owner/repo or owner/repo" aria-label="Repository URL" disabled={Boolean(connecting)} />
+              <button className="sd-btn primary" disabled={!ghUrl.trim() || Boolean(connecting)}>{connecting ? <><i className="codicon codicon-loading codicon-modifier-spin" />Cloning… {Math.round((Date.now() - connecting.since) / 1000)} s</> : <><i className="codicon codicon-plug" />Connect</>}</button>
+              {connecting && <p className="gh-wait">Big repos with OpenZeppelin submodules take a minute or two.</p>}
+              <div className="gh-try">Try: {['nickthelegend/elenchos/tree/main/contracts'].map((u) => <button type="button" key={u} onClick={() => { setGhUrl(u); connect(`https://github.com/${u}`); }} disabled={Boolean(connecting)}>{u}</button>)}</div>
+            </form>
+            <form className="gh-card" onSubmit={(e) => { e.preventDefault(); importGithubFile(); }}>
+              <b><i className="codicon codicon-file-code" />Import one file</b>
+              <p>Paste the GitHub link of a single <code>.sol</code> file. Your browser fetches it into <code>my/</code>.</p>
+              <input value={ghFile} onChange={(e) => setGhFile(e.target.value)} placeholder="github.com/owner/repo/blob/main/src/X.sol" aria-label="File URL" />
+              <button className="sd-btn" disabled={!ghFile.trim()}><i className="codicon codicon-cloud-download" />Import</button>
+            </form>
+            {ghError && <p className="gh-err" role="alert"><i className="codicon codicon-error" />{ghError}</p>}
+            {projects.map((p) => (
+              <div key={p.id} className="gh-proj">
+                <div className="hh"><i className="codicon codicon-repo" /><b>{p.repo}</b><em>{p.sha.slice(0, 7)}</em></div>
+                <p>{p.kind} · {p.files.length} contracts · {p.deps} · expires {new Date(p.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                <button className="sd-btn sm" onClick={() => auditProject(p)} disabled={Boolean(busy)}><i className="codicon codicon-run-all" />Audit whole project</button>
+              </div>
             ))}
           </div>
         </>
@@ -348,7 +444,7 @@ export function Studio() {
           <div className="sd-list">
             {HOLES_REF.map((h) => (
               <div key={h.r} className="sd-hole">
-                <div className="hh"><img src={art(h.obj)} alt="" width={34} height={34} /><b>{h.r}</b><span className={`sev ${h.sev}`}>{h.sev}</span></div>
+                <div className="hh"><i className={`codicon codicon-${h.sev === 'medium' ? 'warning' : 'error'} sv-${h.sev}`} /><b>{h.r}</b><span className={`sev ${h.sev}`}>{h.sev}</span></div>
                 <p>{h.t}</p><p className="fx"><b>Fix</b> {h.f}</p>
               </div>
             ))}
@@ -361,11 +457,11 @@ export function Studio() {
           <div className="sd-list">
             {ready && (Object.keys(ready) as (keyof Ready)[]).map((k) => (
               <div key={k} className={`sd-conn${ready[k] ? ' on' : ''}`}>
-                <div className="hh"><span className="dot" /><b>{READY_LABEL[k]}</b><em>{ready[k] ? 'ready' : 'Setup required'}</em></div>
+                <div className="hh"><i className={`codicon codicon-${ready[k] ? 'pass-filled' : 'warning'}`} /><b>{READY_LABEL[k]}</b><em>{ready[k] ? 'ready' : 'Setup required'}</em></div>
                 <p>{READY_HINT[k]}</p>
               </div>
             ))}
-            <p className="sd-note">The scanner, the compiler and the zkVerify verifier read need no key. Only the chat agent uses a model.</p>
+            <p className="sd-note">The scanner, the compiler, the prover and the verifier read need no key. Only the chat agent uses a model.</p>
           </div>
         </>
       )}
@@ -374,12 +470,12 @@ export function Studio() {
 
   const tabs = (
     <div className="sd-tabs" role="tablist">
-      {open.map((p) => {
-        const f = files.find((x) => x.path === p); const dirty = f && f.source !== f.original;
+      {open.map((k) => {
+        const f = files.find((x) => x.key === k); if (!f) return null; const dirty = f.source !== f.original;
         return (
-          <div key={p} className={`sd-tab${p === active ? ' on' : ''}`} role="tab" aria-selected={p === active}>
-            <button className="tab-name" onClick={() => setActive(p)}><SolIcon />{base(p)}{dirty && <span className="dirty" title="edited" />}</button>
-            <button className="tab-x" aria-label={`Close ${base(p)}`} onClick={() => closeTab(p)}>×</button>
+          <div key={k} className={`sd-tab${k === active ? ' on' : ''}`} role="tab" aria-selected={k === active}>
+            <button className="tab-name" onClick={() => setActive(k)}><i className="codicon codicon-file-code" />{f.label}{dirty && <span className="dirty" title="edited" />}</button>
+            <button className="tab-x" aria-label={`Close ${f.label}`} onClick={() => closeTab(k)}><i className="codicon codicon-close" /></button>
           </div>
         );
       })}
@@ -387,36 +483,38 @@ export function Studio() {
       {file && audit.patch?.detail?.patchedSource && (
         <div className="sd-viewsw">
           <button className={view === 'source' ? 'on' : ''} onClick={() => setView('source')}>Source</button>
-          <button className={view === 'diff' ? 'on' : ''} onClick={() => setView('diff')}>Fix · {audit.patch.detail.verified ? 'verified' : 'rejected'}</button>
+          <button className={view === 'diff' ? 'on' : ''} onClick={() => setView('diff')}><i className={`codicon codicon-${audit.patch.detail.verified ? 'verified-filled' : 'error'}`} />Fix · {audit.patch.detail.verified ? 'verified' : 'rejected'}</button>
         </div>
       )}
     </div>
   );
 
+  const crumbs = file ? (file.kind === 'project' ? [projectOf(file)?.repo ?? 'project', ...file.rel!.split('/')] : [file.folder, file.label]) : [];
   const editor = (
     <div className="sd-editor">
-      {!narrow && tabs}
+      {tabs}
       <div className="sd-crumbs">
-        {file ? <><span>{file.path.split('/')[0]}</span><Ico n="chev" size={12} /><b>{base(file.path)}</b>{file.builtin && file.source !== file.original && <button className="sd-reset" onClick={resetFile}>Revert to original</button>}</> : <span>No file open</span>}
+        {file ? crumbs.map((c, i) => <span key={i} className={i === crumbs.length - 1 ? 'last' : ''}>{i > 0 && <i className="codicon codicon-chevron-right" />}{c}</span>) : <span>No file open</span>}
+        {file && file.source !== file.original && <button className="sd-reset" onClick={() => edit(file.original)}><i className="codicon codicon-discard" />Revert</button>}
       </div>
       <div className="sd-monaco">
         {loading && <div className="sd-loading"><span className="spin" />Loading the workspace…</div>}
-        {!loading && !file && <div className="sd-welcome"><img src={art('logo')} alt="" width={120} height={120} /><h2>Open a contract to audit</h2><p>Pick a demo target in the Explorer, or create a file and paste your own zkVerify consumer.</p></div>}
+        {!loading && !file && <div className="sd-welcome"><Mark size={56} /><h2>Open a contract to audit</h2><p>Pick a demo target, create a file, or connect a GitHub repository.</p></div>}
         {file && view === 'source' && (
-          <Editor key={file.path} path={file.path} language="sol" theme="elenchos" value={file.source}
+          <Editor key={file.key} path={file.key} language="sol" theme="elenchos" value={file.source}
             onChange={(v) => edit(v ?? '')} beforeMount={defineTheme}
             onMount={(ed, m) => { editorRef.current = ed; monacoRef.current = m; ed.onDidChangeCursorPosition((e: any) => setCursor({ ln: e.position.lineNumber, col: e.position.column })); setCursor({ ln: 1, col: 1 }); setAudits((x) => ({ ...x })); }}
             loading={<div className="sd-loading"><span className="spin" />Loading the editor…</div>}
-            options={{ fontFamily: '"Commit Mono", ui-monospace, Menlo, monospace', fontSize: 13.5, lineHeight: 22, minimap: { enabled: !narrow, scale: 1 }, glyphMargin: true, scrollBeyondLastLine: false, smoothScrolling: true, cursorBlinking: 'smooth', renderLineHighlight: 'all', padding: { top: 12 }, automaticLayout: true, wordWrap: narrow ? 'on' : 'off', fixedOverflowWidgets: true }} />
+            options={{ fontFamily: '"Commit Mono", ui-monospace, Menlo, monospace', fontSize: 13.5, lineHeight: 22, minimap: { enabled: !narrow, scale: 1 }, glyphMargin: true, scrollBeyondLastLine: false, smoothScrolling: true, cursorBlinking: 'smooth', renderLineHighlight: 'all', padding: { top: 10 }, automaticLayout: true, wordWrap: narrow ? 'on' : 'off', fixedOverflowWidgets: true }} />
         )}
         {file && view === 'diff' && audit.patch?.detail?.patchedSource && (
           <div className="sd-diffwrap">
             <div className={`sd-diffbar ${audit.patch.detail.verified ? 'ok' : 'bad'}`}>
-              <img src={art(audit.patch.detail.verified ? 'seal' : 'cracked')} alt="" width={28} height={28} />
+              <i className={`codicon codicon-${audit.patch.detail.verified ? 'verified-filled' : 'error'}`} />
               <span><b>{audit.patch.detail.verified ? 'Fix verified' : 'Fix rejected'}</b> · {audit.patch.summary}</span>
-              {audit.patch.detail.verified && <button className="sd-btn primary sm" onClick={applyPatch}>Apply to {base(file.path)}</button>}
+              {audit.patch.detail.verified && audit.patch.detail.patchedSource !== file.source && <button className="sd-btn primary sm" onClick={applyPatch}><i className="codicon codicon-check" />Apply to {file.label}</button>}
             </div>
-            <DiffEditor original={file.source} modified={audit.patch.detail.patchedSource} language="sol" theme="elenchos" beforeMount={defineTheme}
+            <DiffEditor original={file.original} modified={audit.patch.detail.patchedSource} language="sol" theme="elenchos" beforeMount={defineTheme}
               options={{ readOnly: true, renderSideBySide: !narrow, fontFamily: '"Commit Mono", ui-monospace, Menlo, monospace', fontSize: 13, minimap: { enabled: false }, scrollBeyondLastLine: false, automaticLayout: true }} />
           </div>
         )}
@@ -428,9 +526,9 @@ export function Studio() {
     <div className="sd-bottom">
       <div className="sd-ptabs" role="tablist">
         <button role="tab" aria-selected={bottomTab === 'terminal'} onClick={() => setBottomTab('terminal')}>Terminal</button>
-        <button role="tab" aria-selected={bottomTab === 'problems'} onClick={() => setBottomTab('problems')}>Problems {findings.length > 0 && !stale && <span className="badge">{findings.length}</span>}</button>
+        <button role="tab" aria-selected={bottomTab === 'problems'} onClick={() => setBottomTab('problems')}>Problems {allProblems.length > 0 && <span className="badge">{allProblems.length}</span>}</button>
         <div className="grow" />
-        {bottomTab === 'terminal' && <button className="ic" aria-label="Clear terminal" title="Clear" onClick={() => setTerm([])}><Ico n="trash" /></button>}
+        {bottomTab === 'terminal' && <button className="ic" aria-label="Clear terminal output" title="Clear" onClick={() => setTerm([])}><i className="codicon codicon-clear-all" /></button>}
       </div>
       {bottomTab === 'terminal' ? (
         <div className="sd-term" ref={termRef} role="log" aria-live="polite">
@@ -441,10 +539,10 @@ export function Studio() {
         </div>
       ) : (
         <div className="sd-problems">
-          {(!audit.findings || stale) && <div className="sd-none">{stale ? 'The file changed since the last scan. Run the audit again.' : 'No problems yet. Run the audit to check this file.'}</div>}
-          {!stale && findings.map((f, i) => (
-            <button key={i} className="sd-prob row" onClick={() => reveal(active!, f.line)}>
-              <span className={`sev-dot ${f.severity}`} /><b>{f.rule}</b><span className="pr-t">{f.title}</span><em>{f.function.split('(')[0]} · {base(active!)}:{f.line}</em>
+          {!allProblems.length && <div className="sd-none">No problems found yet. Run the audit on a file, or audit a whole connected project.</div>}
+          {allProblems.map(({ key, f }, i) => (
+            <button key={i} className="sd-prob row" onClick={() => reveal(key, f.line)}>
+              <i className={`codicon codicon-${f.severity === 'medium' ? 'warning' : 'error'} sv-${f.severity}`} /><b>{f.rule}</b><span className="pr-t">{f.title}</span><em>{f.function.split('(')[0]} · {files.find((x) => x.key === key)?.label}:{f.line}</em>
             </button>
           ))}
         </div>
@@ -452,76 +550,20 @@ export function Studio() {
     </div>
   );
 
+  const auditPanel = <AuditPanel fileName={file?.label ?? null} verdict={verdict} steps={steps} findings={findings} stale={stale} ms={audit.ms} forge={audit.forge} replay={audit.replay} running={running} onReveal={(f) => active && reveal(active, f.line)} />;
   const chat = (
-    <div className="sd-chat">
-      <div className="sd-head"><span><img src={art('scanner')} alt="" width={18} height={18} />Elenchos agent</span>{ready && <em className={ready.anthropic ? 'ok' : 'warn'}>{ready.anthropic ? 'Claude · 4 tools' : 'Setup required'}</em>}</div>
-      <div className="sd-chatbody" ref={chatRef}>
-        {audit.entries.length === 0 && (
-          <div className="sd-chatempty">
-            <p>Ask in plain words. The agent picks its tools (scan, forge, ask zkVerify, verify fix) and every call shows up here and in the terminal.</p>
-            {['Find every hole, prove the impact, then propose and verify a fix.', 'Is the verification key pinned? Show me what happens if it is not.', 'Propose the smallest fix for every finding and verify it.'].map((p) => (
-              <button key={p} disabled={!file || Boolean(busy)} onClick={() => ask(p)}>{p}</button>
-            ))}
-          </div>
-        )}
-        {audit.entries.map((e, i) => <ChatEntry key={i} e={e} />)}
-        {busy === 'agent' && audit.entries[audit.entries.length - 1]?.kind !== 'agent' && <div className="typing"><span /><span /><span /></div>}
-      </div>
-      <form className="sd-composer" onSubmit={(e) => { e.preventDefault(); ask(input); setInput(''); }}>
-        <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={file ? `Ask about ${base(file.path)}…` : 'Open a file first'} disabled={!file || Boolean(busy)} aria-label="Ask the agent" />
-        {busy === 'agent'
-          ? <button type="button" className="send stop" onClick={stop} aria-label="Stop"><span className="sq" /></button>
-          : <button type="submit" className="send" disabled={!input.trim() || !file || Boolean(busy)} aria-label="Send"><Ico n="up" /></button>}
-      </form>
-    </div>
-  );
-
-  const auditPanel = (
-    <div className="sd-auditp">
-      <div className="sd-head"><span>Audit</span>{audit.ms != null && !stale && <em>{audit.ms} ms</em>}</div>
-      <div className="sd-auditbody">
-        <div className={`sd-verdict v-${verdict.cls}`}>
-          <img src={art(verdict.obj)} alt="" width={76} height={76} />
-          <div><div className="vl">{file ? base(file.path) : 'Verdict'}</div><div className="vb">{verdict.big}</div><p>{verdict.sub}</p></div>
-        </div>
-        <ol className="sd-steps">
-          {steps.map((s) => (
-            <li key={s.t} className={`s-${s.st ?? 'idle'}`}><img src={art(TOOL_ART[s.t])} alt="" width={26} height={26} /><span>{TOOL_NAME[s.t]}</span>
-              <em>{s.st === 'ok' ? (s.t === 'patch' ? 'verified' : 'done') : s.st === 'error' ? (s.t === 'patch' ? 'rejected' : 'error') : s.st === 'setup' ? 'setup' : s.st === 'running' ? 'running' : '—'}</em></li>
-          ))}
-        </ol>
-        {audit.findings && !stale && (
-          <div className="sd-counts">
-            <div className="c-critical"><b>{counts.critical}</b>critical</div><div className="c-high"><b>{counts.high}</b>high</div><div className="c-medium"><b>{counts.medium}</b>medium</div>
-          </div>
-        )}
-        {(audit.forge || audit.replay) && (
-          <div className="sd-facts">
-            <div className="fh">Evidence</div>
-            {audit.forge?.detail?.ms != null && <Fact k="Forged proof" v={`${audit.forge.detail.ms} ms · ${audit.forge.detail.verifiedLocally ? 'verified locally' : 'unverified'}`} tone="coral" />}
-            {audit.forge?.detail?.attackerVkHash && <Fact k="Attacker vkHash" v={short(audit.forge.detail.attackerVkHash)} />}
-            {audit.forge?.detail?.leaf && <Fact k="Forged leaf" v={short(audit.forge.detail.leaf)} />}
-            {audit.replay?.detail?.aggregationId != null && <Fact k="Real aggregation" v={`#${audit.replay.detail.aggregationId} · block ${audit.replay.detail.block}`} />}
-            {audit.replay?.detail && 'accepted' in audit.replay.detail && <Fact k="zkVerify says" v={audit.replay.detail.accepted ? 'leaf accepted' : 'leaf not in aggregation'} tone={audit.replay.detail.accepted ? 'coral' : 'mint'} />}
-          </div>
-        )}
-        {!stale && findings.map((f, i) => (
-          <button key={i} className={`sd-finding f-${f.severity}`} onClick={() => reveal(active!, f.line)}>
-            <div className="ft"><b>{f.rule}</b><span className={`sev ${f.severity}`}>{f.severity}</span><em>line {f.line}</em></div>
-            <div className="fti">{f.title}</div>
-            <div className="ffx"><b>Fix</b> {f.fix}</div>
-          </button>
-        ))}
-      </div>
-    </div>
+    <Chat fileName={file?.label ?? null} entries={audit.entries} busy={busy} ready={Boolean(ready?.anthropic)} model={model} runsPerHour={runsPerHour}
+      findingCount={audit.findings && !stale ? findings.length : null} onSend={(t) => ask(t)} onCommand={command} onStop={stop}
+      onClear={() => file && patchAudit(file.key, (a) => ({ ...a, entries: [] }))} onOpenDiff={() => { setView('diff'); if (narrow) setMpane('editor'); }} onApply={applyPatch}
+      canApply={Boolean(audit.patch?.detail?.verified && file && audit.patch.detail.patchedSource !== file.source)} />
   );
 
   const status = (
     <footer className="sd-status">
-      <span className="st-brand"><Ico n="shield" size={13} />Elenchos</span>
-      {ready && (Object.keys(ready) as (keyof Ready)[]).map((k) => <span key={k} className={`st-item${ready[k] ? '' : ' off'}`} title={READY_HINT[k]}><span className="d" />{READY_LABEL[k]}</span>)}
+      <span className="st-brand"><i className="codicon codicon-shield" />Elenchos</span>
+      {ready && (Object.keys(ready) as (keyof Ready)[]).map((k) => <span key={k} className={`st-item hide-sm${ready[k] ? '' : ' off'}`} title={READY_HINT[k]}><i className={`codicon codicon-${ready[k] ? 'pass' : 'warning'}`} />{READY_LABEL[k]}</span>)}
       <span className="grow" />
-      {file && <span className="st-item">{stale ? 'edited · re-run audit' : audit.findings ? `${findings.length} problem${findings.length === 1 ? '' : 's'}` : 'not audited'}</span>}
+      {file && <span className="st-item"><i className={`codicon codicon-${stale ? 'history' : audit.findings ? (findings.length ? 'error' : 'pass') : 'circle-large'}`} />{stale ? 'edited · re-run audit' : audit.findings ? `${findings.length} problem${findings.length === 1 ? '' : 's'}` : 'not audited'}</span>}
       <span className="st-item hide-md">Ln {cursor.ln}, Col {cursor.col}</span>
       <span className="st-item hide-md">Solidity</span>
     </footer>
@@ -532,14 +574,15 @@ export function Studio() {
       <div className="sd sd-narrow">
         {toolbar}
         <main className="sd-mmain">
+          {mpane === 'files' && sidebar}
           {mpane === 'editor' && editor}
           {mpane === 'chat' && chat}
           {mpane === 'terminal' && terminal}
           {mpane === 'audit' && auditPanel}
         </main>
         <nav className="sd-mtabs" aria-label="Panels">
-          {(['editor', 'chat', 'terminal', 'audit'] as const).map((p) => (
-            <button key={p} aria-pressed={mpane === p} onClick={() => setMpane(p)}>{p === 'editor' ? 'Code' : p[0].toUpperCase() + p.slice(1)}{p === 'audit' && findings.length > 0 && !stale && <span className="badge">{findings.length}</span>}</button>
+          {([['files', 'files', 'Files'], ['editor', 'code', 'Code'], ['chat', 'sparkle', 'Chat'], ['terminal', 'terminal', 'Terminal'], ['audit', 'shield', 'Audit']] as const).map(([p, ic, l]) => (
+            <button key={p} aria-pressed={mpane === p} onClick={() => setMpane(p)}><i className={`codicon codicon-${ic}`} /><span>{l}</span>{p === 'audit' && findings.length > 0 && !stale && <span className="badge">{findings.length}</span>}</button>
           ))}
         </nav>
       </div>
@@ -551,22 +594,22 @@ export function Studio() {
       {toolbar}
       <div className="sd-body">
         {activity}
-        <PanelGroup direction="horizontal" autoSaveId="elenchos-studio-h">
-          {showSide && <><Panel id="side" order={1} defaultSize={17} minSize={12} maxSize={30}>{sidebar}</Panel><PanelResizeHandle className="rh v" /></>}
+        <PanelGroup direction="horizontal" autoSaveId="elenchos-studio-v2-h">
+          {showSide && <><Panel id="side" order={1} defaultSize={16} minSize={11} maxSize={30}>{sidebar}</Panel><PanelResizeHandle className="rh v" /></>}
           <Panel id="main" order={2} minSize={35}>
-            <PanelGroup direction="vertical" autoSaveId="elenchos-studio-v">
-              <Panel defaultSize={64} minSize={25}>{editor}</Panel>
+            <PanelGroup direction="vertical" autoSaveId="elenchos-studio-v2-v">
+              <Panel defaultSize={62} minSize={25}>{editor}</Panel>
               <PanelResizeHandle className="rh h" />
-              <Panel defaultSize={36} minSize={14}>
-                <PanelGroup direction="horizontal" autoSaveId="elenchos-studio-b">
+              <Panel defaultSize={38} minSize={14}>
+                <PanelGroup direction="horizontal" autoSaveId="elenchos-studio-v2-b">
                   <Panel defaultSize={52} minSize={25}>{terminal}</Panel>
                   <PanelResizeHandle className="rh v" />
-                  <Panel defaultSize={48} minSize={25}>{chat}</Panel>
+                  <Panel defaultSize={48} minSize={25}>{auditPanel}</Panel>
                 </PanelGroup>
               </Panel>
             </PanelGroup>
           </Panel>
-          {showAudit && <><PanelResizeHandle className="rh v" /><Panel id="audit" order={3} defaultSize={22} minSize={16} maxSize={34}>{auditPanel}</Panel></>}
+          {showChat && <><PanelResizeHandle className="rh v" /><Panel id="chat" order={3} defaultSize={30} minSize={22} maxSize={45}>{chat}</Panel></>}
         </PanelGroup>
       </div>
       {status}
@@ -574,45 +617,66 @@ export function Studio() {
   );
 }
 
-function Folder({ name, hint, children }: { name: string; hint: string; children: React.ReactNode }) {
+/* ---------- explorer ---------- */
+type TreeNode = { dirs: Map<string, TreeNode>; files: File[] };
+function buildTree(fs: File[]): TreeNode {
+  const root: TreeNode = { dirs: new Map(), files: [] };
+  for (const f of fs) {
+    const parts = f.rel!.split('/'); let n = root;
+    for (const d of parts.slice(0, -1)) { if (!n.dirs.has(d)) n.dirs.set(d, { dirs: new Map(), files: [] }); n = n.dirs.get(d)!; }
+    n.files.push(f);
+  }
+  return root;
+}
+function Tree({ node, depth, active, audits, onOpen }: { node: TreeNode; depth: number; active: string | null; audits: Record<string, Audit>; onOpen: (k: string) => void }) {
+  return (
+    <>
+      {[...node.dirs.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([name, n]) => (
+        <SubFolder key={name} name={name} depth={depth}><Tree node={n} depth={depth + 1} active={active} audits={audits} onOpen={onOpen} /></SubFolder>
+      ))}
+      {[...node.files].sort((a, b) => a.label.localeCompare(b.label)).map((f) => <FileRow key={f.key} f={f} depth={depth} active={active === f.key} audit={audits[f.key]} onOpen={() => onOpen(f.key)} />)}
+    </>
+  );
+}
+function SubFolder({ name, depth, children }: { name: string; depth: number; children: React.ReactNode }) {
+  const [open, setOpen] = useState(depth < 2);
+  return (
+    <div>
+      <button className="fo sub" style={{ paddingLeft: 22 + depth * 12 }} onClick={() => setOpen(!open)} aria-expanded={open}><i className={`codicon codicon-chevron-${open ? 'down' : 'right'}`} /><i className={`codicon codicon-folder${open ? '-opened' : ''}`} /><span>{name}</span></button>
+      {open && children}
+    </div>
+  );
+}
+function Folder({ name, hint, icon = 'folder', action, children }: { name: string; hint: string; icon?: string; action?: React.ReactNode; children: React.ReactNode }) {
   const [open, setOpen] = useState(true);
   return (
     <div className="sd-folder">
-      <button className="fo" onClick={() => setOpen(!open)} aria-expanded={open}><Ico n={open ? 'chevd' : 'chev'} size={14} /><Ico n="folder" size={15} /><span>{name}</span><em>{hint}</em></button>
+      <div className="fo-row">
+        <button className="fo" onClick={() => setOpen(!open)} aria-expanded={open}><i className={`codicon codicon-chevron-${open ? 'down' : 'right'}`} /><i className={`codicon codicon-${icon === 'folder' && open ? 'folder-opened' : icon}`} /><span>{name}</span><em>{hint}</em></button>
+        {action}
+      </div>
       {open && <div className="fo-kids">{children}</div>}
     </div>
   );
 }
-function FileRow({ f, active, audit, onOpen, onDelete }: { f: File; active: boolean; audit?: Audit; onOpen: () => void; onDelete?: () => void }) {
+function FileRow({ f, active, audit, onOpen, onDelete, depth = 0 }: { f: File; active: boolean; audit?: Audit; onOpen: () => void; onDelete?: () => void; depth?: number }) {
   const n = audit?.findings?.length ?? 0; const crit = audit?.findings?.some((x) => x.severity === 'critical');
+  const stale = audit?.scannedSource !== undefined && audit.scannedSource !== f.source;
   return (
     <div className={`sd-file${active ? ' on' : ''}`}>
-      <button className="fn" onClick={onOpen}><SolIcon />{base(f.path)}{f.source !== f.original && <span className="dirty" />}</button>
-      {audit?.findings && <span className={`fcount ${n ? (crit ? 'crit' : 'warn') : 'ok'}`}>{n || '✓'}</span>}
-      {onDelete && <button className="fdel" aria-label={`Delete ${base(f.path)}`} title="Delete" onClick={onDelete}><Ico n="trash" size={13} /></button>}
+      <button className="fn" onClick={onOpen} style={{ paddingLeft: 34 + depth * 12 }} title={f.from ?? f.label}><i className="codicon codicon-file-code" />{f.label}{f.source !== f.original && <span className="dirty" />}</button>
+      {audit?.findings && (stale ? <span className="fcount" title="edited since the audit"><i className="codicon codicon-history" /></span> : <span className={`fcount ${n ? (crit ? 'crit' : 'warn') : 'ok'}`}>{n || <i className="codicon codicon-check" />}</span>)}
+      {onDelete && <button className="fdel" aria-label={`Delete ${f.label}`} title="Delete" onClick={onDelete}><i className="codicon codicon-trash" /></button>}
     </div>
   );
 }
-function ChatEntry({ e }: { e: Entry }) {
-  if (e.kind === 'user') return <div className="cm user"><div>{e.text}</div></div>;
-  if (e.kind === 'agent') return <div className="cm agent"><img src={art('scanner')} alt="" width={22} height={22} /><div className="md"><Markdown text={e.text} /></div></div>;
-  if (e.kind === 'review') return <div className="cm review"><b>Second opinion{e.status === 'setup' ? ' · Setup required' : ''}</b>{e.text}</div>;
-  const ev = e.event;
-  return (
-    <div className={`cm tool t-${ev.status}`}>
-      <img src={art(TOOL_ART[ev.tool] ?? 'scanner')} alt="" width={30} height={30} />
-      <div><div className="th"><b>{TOOL_NAME[ev.tool] ?? ev.tool}</b><span className={`pill p-${ev.status}`}>{ev.status === 'ok' ? (ev.tool === 'patch' ? 'verified' : 'done') : ev.status === 'error' ? (ev.tool === 'patch' ? 'rejected' : 'error') : ev.status}</span></div><p>{ev.summary}</p></div>
-    </div>
-  );
-}
-function Fact({ k, v, tone }: { k: string; v: string; tone?: 'coral' | 'mint' }) { return <div className="fact"><span>{k}</span><code className={tone ?? ''}>{v}</code></div>; }
 
 function Offline({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <div className="setup">
       <a className="cr-brand" href="#/"><Mark size={28} /><span>Elenchos</span><em>/ studio</em></a>
       <div className="setup-card">
-        <img src={art('empty')} alt="The scanner orb, resting" width={170} height={170} />
+        <img src="/art/empty.webp" alt="The scanner orb, resting" width={170} height={170} />
         <span className="eyebrow">Setup required</span>
         <h1>The studio runs next to Foundry and Slither.</h1>
         <p>It compiles and scans for real, so it needs the Elenchos server. This page couldn’t reach it.</p>
@@ -626,18 +690,4 @@ function Offline({ message, onRetry }: { message: string; onRetry: () => void })
       </div>
     </div>
   );
-}
-
-const SolIcon = () => <svg className="sol" width="14" height="14" viewBox="0 0 24 24" aria-hidden><path d="M8 2 12 8 8 14 4 8z" fill="#8ea4ff" opacity=".9" /><path d="M16 10 20 16 16 22 12 16z" fill="#5b7cff" /><path d="M12 8 16 10 12 16 8 14z" fill="#a9b8ff" opacity=".55" /></svg>;
-const P: Record<string, string> = {
-  play: 'M7 5v14l11-7z', key: 'M14 7a4 4 0 1 1-3.9 5H8v2H6v2H3v-3l6.1-6.1A4 4 0 0 1 14 7zM15.5 9.5h.01', tree: 'M12 3v4M6 11h12M6 11v3M18 11v3M12 7v4M4 14h4v4H4zM16 14h4v4h-4zM10 3h4v4h-4z',
-  wrench: 'M14.7 6.3a4 4 0 0 0-5.4 5.4L3.6 17.4a1.4 1.4 0 0 0 2 2l5.7-5.7a4 4 0 0 0 5.4-5.4l-2.5 2.5-2-.5-.5-2z', stop: 'M7 7h10v10H7z',
-  files: 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5', shield: 'M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6zM12 9v4M12 16h.01',
-  book: 'M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2zM4 21V5M8 7h7', plug: 'M9 7V3M15 7V3M6 7h12v4a6 6 0 0 1-12 0zM12 17v4', panel: 'M3 4h18v16H3zM15 4v16',
-  plus: 'M12 5v14M5 12h14', chev: 'm9 6 6 6-6 6', chevd: 'm6 9 6 6 6-6', folder: 'M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z',
-  trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3', up: 'M12 19V5M5 12l7-7 7 7',
-};
-function Ico({ n, size = 16 }: { n: string; size?: number }) {
-  const fill = n === 'play' || n === 'stop';
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill={fill ? 'currentColor' : 'none'} stroke={fill ? 'none' : 'currentColor'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={P[n]} /></svg>;
 }
