@@ -29,7 +29,7 @@ Elenchos isn't a toy on demo contracts. We pointed it at the public zkVerify-eco
 
 <video src="https://github.com/nickthelegend/elenchos/releases/download/v0.2.0/elenchos-found-in-the-wild.mp4" poster="https://raw.githubusercontent.com/nickthelegend/elenchos/main/docs/img/film-poster.jpg" controls muted width="100%"></video>
 
-**▶ [Watch the 1:33 film](https://github.com/nickthelegend/elenchos/releases/download/v0.2.0/elenchos-found-in-the-wild.mp4)** — one live take: the problem → the four real repos → anon-claim's exact line on GitHub → a live `/audit` → a live exploit on a fork of Ethereum Sepolia against zkVerify's real verifier → the fix.
+**▶ [Watch the 1:33 film](https://github.com/nickthelegend/elenchos/releases/download/v0.2.0/elenchos-found-in-the-wild.mp4)** — one live take: what the agent is → the four findings (one named, three anonymous) → anon-claim's exact line on GitHub → a live `/audit` → a live exploit on a fork of Ethereum Sepolia against zkVerify's real verifier → the fix.
 
 [![Found in the wild — the proven exploit, 1,000,000 minted on a Sepolia fork](https://raw.githubusercontent.com/nickthelegend/elenchos/main/docs/img/film-poster.jpg)](https://github.com/nickthelegend/elenchos/releases/download/v0.2.0/elenchos-found-in-the-wild.mp4)
 
