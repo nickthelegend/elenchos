@@ -17,7 +17,7 @@ proves impact with a **real proof on a fork of zkVerify's live Sepolia verifier*
 [elenchos-studio.vercel.app](https://elenchos-studio.vercel.app); **73 tests**, nothing mocked; the same agent
 also plays Steal the VFY and Proof Gatekeeper in this event.
 
-**🌐 [elenchos-studio.vercel.app](https://elenchos-studio.vercel.app)** · **▶ [Watch the 1:24 film: "Found in the wild"](https://github.com/nickthelegend/elenchos/releases/download/v0.2.0/elenchos-found-in-the-wild.mp4)** (one live take: four real ecosystem bugs, then a live exploit on zkVerify's Sepolia verifier) · **[Read the findings](docs/FINDINGS.md)** · **[How we played all four tracks](docs/agent-games-four-tracks.md)**
+**🌐 [elenchos-studio.vercel.app](https://elenchos-studio.vercel.app)** · **▶ [Watch the 1:33 film: "Found in the wild"](https://github.com/nickthelegend/elenchos/releases/download/v0.2.0/elenchos-found-in-the-wild.mp4)** (one live take, narrated by Nick: four real ecosystem bugs, then a live exploit on zkVerify's Sepolia verifier) · **[Read the findings](docs/FINDINGS.md)** · **[How we played all four tracks](docs/agent-games-four-tracks.md)**
 
 ![Elenchos Studio after a real investigation: the verified fix as a diff, the terminal log of scan, forge, zkVerify and verify, and the audit panel with the evidence](docs/img/studio.jpg)
 
@@ -29,7 +29,7 @@ Elenchos isn't a toy on demo contracts. We pointed it at the public zkVerify-eco
 
 <video src="https://github.com/nickthelegend/elenchos/releases/download/v0.2.0/elenchos-found-in-the-wild.mp4" poster="https://raw.githubusercontent.com/nickthelegend/elenchos/main/docs/img/film-poster.jpg" controls muted width="100%"></video>
 
-**▶ [Watch the 1:24 film](https://github.com/nickthelegend/elenchos/releases/download/v0.2.0/elenchos-found-in-the-wild.mp4)** — one live take: the problem → the four real repos → anon-claim's exact line on GitHub → a live `/audit` → a live exploit on a fork of Ethereum Sepolia against zkVerify's real verifier → the fix.
+**▶ [Watch the 1:33 film](https://github.com/nickthelegend/elenchos/releases/download/v0.2.0/elenchos-found-in-the-wild.mp4)** — one live take: the problem → the four real repos → anon-claim's exact line on GitHub → a live `/audit` → a live exploit on a fork of Ethereum Sepolia against zkVerify's real verifier → the fix.
 
 [![Found in the wild — the proven exploit, 1,000,000 minted on a Sepolia fork](https://raw.githubusercontent.com/nickthelegend/elenchos/main/docs/img/film-poster.jpg)](https://github.com/nickthelegend/elenchos/releases/download/v0.2.0/elenchos-found-in-the-wild.mp4)
 
