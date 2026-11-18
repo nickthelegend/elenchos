@@ -17,7 +17,7 @@ export const COMMANDS: Command[] = [
   { cmd: '/audit', icon: 'search', label: 'Run audit', desc: 'Slither and the five detectors on this file', model: false },
   { cmd: '/forge', icon: 'key', label: 'Forge exploit', desc: 'A real Groth16 proof from an attacker circuit', model: false },
   { cmd: '/zkverify', icon: 'type-hierarchy', label: 'Ask zkVerify', desc: 'Read the real verifier on Sepolia', model: false },
-  { cmd: '/attack', icon: 'debug-alt', label: 'Run exploit test', desc: 'A real Foundry exploit test on a local EVM: does the attacker get paid?', model: false },
+  { cmd: '/attack', icon: 'debug-alt', label: 'Run exploit test', desc: 'A real Foundry exploit test on a Sepolia fork, against zkVerify’s real verifier: does the attacker get paid?', model: false },
   { cmd: '/verify', icon: 'tools', label: 'Verify my edit', desc: 'Compile, re-scan and anti-cheat your edited file', model: false },
   { cmd: '/investigate', icon: 'sparkle', label: 'Investigate', desc: 'The agent finds, proves and fixes every hole', model: true },
   { cmd: '/fix', icon: 'lightbulb', label: 'Fix it', desc: 'The agent writes the smallest fix and verifies it', model: true },

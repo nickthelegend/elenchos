@@ -45,7 +45,8 @@ export function AuditPanel({ fileName, verdict, steps, findings, stale, ms, forg
             {forge?.detail?.attackerVkHash && <div><dt>Attacker vkHash</dt><dd>{short(forge.detail.attackerVkHash)}</dd></div>}
             {forge?.detail?.leaf && <div><dt>Forged leaf</dt><dd>{short(forge.detail.leaf)}</dd></div>}
             {replay?.detail?.aggregationId != null && <div><dt>Real aggregation</dt><dd>#{replay.detail.aggregationId} · block {replay.detail.block}</dd></div>}
-            {replay?.detail && 'accepted' in replay.detail && <div><dt>zkVerify says</dt><dd className={replay.detail.accepted ? 'bad' : 'ok'}>{replay.detail.accepted ? 'leaf accepted' : 'leaf not in aggregation'}</dd></div>}
+            {replay?.detail && 'accepted' in replay.detail && <div><dt>{replay.detail.realReceipt ? 'Fresh forged leaf' : 'zkVerify says'}</dt><dd className={replay.detail.accepted ? 'bad' : 'ok'}>{replay.detail.accepted ? 'leaf accepted' : 'leaf not in aggregation'}</dd></div>}
+            {replay?.detail?.realReceipt && <div><dt>Attacker’s submitted proof</dt><dd className={replay.detail.realReceipt.accepted ? 'bad' : 'ok'}>{replay.detail.realReceipt.accepted ? `aggregated · #${replay.detail.realReceipt.aggregationId} · verifier says true` : 'not confirmed'}</dd></div>}
             {attack?.detail?.tests && <div><dt>Exploit test</dt><dd className={attack.detail.status === 'exploitable' ? 'bad' : attack.detail.status === 'blocked' ? 'ok' : ''}>{attack.detail.status === 'exploitable' ? `${attack.detail.tests.filter((t: { worked: boolean }) => t.worked).length} attack(s) worked on ${attack.detail.contract}` : attack.detail.status === 'blocked' ? `every attack reverted on ${attack.detail.contract}` : 'did not run'}</dd></div>}
           </dl>
         )}

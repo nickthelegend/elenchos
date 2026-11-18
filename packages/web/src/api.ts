@@ -37,15 +37,41 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 export const forgeExploit = () => post<{ event: ToolEvent; leaf: string | null }>('/api/forge', {});
 export const askZkVerify = (leaf: string) => post<{ event: ToolEvent }>('/api/replay', { leaf });
 export type AttackTest = { name: string; worked: boolean; reason: string | null; logs: string[]; gas: number | null };
-export type AttackResult = { status: 'exploitable' | 'blocked' | 'error'; summary: string; template: string | null; contract: string | null; tests: AttackTest[]; ms: number; compileError?: string; testSource: string; forgery?: { vkHash: string; leaf: string; inputs: string[] } };
-/** Run the exploit test: a real Foundry test on a local EVM with a real forged proof (no model). */
+export type AttackNetwork = { kind: 'local' } | { kind: 'sepolia-fork'; verifier: string; aggregationId: number; domainId: number; forgedJob: string; forgedTx: string | null; honestAggregationId: number };
+export type AttackResult = { network?: AttackNetwork; forkError?: string; status: 'exploitable' | 'blocked' | 'error'; summary: string; template: string | null; contract: string | null; tests: AttackTest[]; ms: number; compileError?: string; testSource: string; forgery?: { vkHash: string; leaf: string; inputs: string[] } };
+/** Run the exploit test: a real Foundry test, on a Sepolia fork against zkVerify's real verifier when the server holds a real attacker receipt, else on a local EVM (no model). */
 export const runAttack = (subject: Subject) => post<AttackResult>('/api/attack', subject);
 export type Report = {
   id: string; createdAt: string; title: string; source: string; sha256: string; repo: { repo: string; sha: string; path: string; explorer?: string | null } | null;
   findings: Finding[]; compileError: string | null; attack: AttackResult | null; forgery: { vkHash: string; leaf: string; inputs: string[] } | null;
   fix: null | { source: string; sha256: string; verified: boolean; compiles: boolean; reason: string; remaining: string[]; evaded: string[]; attack: AttackResult | null };
   engine: string;
+  anchor?: Anchor;
 };
+/** Proof of audit on zkVerify: the report's sha256 and verdict, proven by the auditor key and aggregated to Sepolia. */
+export type Anchor = {
+  status: 'proving' | 'submitted' | 'aggregated' | 'failed'; digest: string; verdict: number; verdictLabel: string; auditor: string; vkHash: string | null;
+  inputs: string[]; leaf: string | null; jobId: string | null; txHash: string | null; statuses: { status: string; at: string }[];
+  aggregationId: number | null; domainId: number | null; merklePath: string[]; leafCount: number | null; index: number | null;
+  verifier: string; chain: 'sepolia'; error: string | null; startedAt: string; aggregatedAt: string | null;
+};
+export type AnchorCheck = { accepted: boolean; digest: string; digestMatches: boolean; leaf: string; leafMatches: boolean; verifier: string; domainId: number; aggregationId: number; checkedAt: string };
+async function getJson<T>(path: string): Promise<T> {
+  let r: Response;
+  try { r = await fetch(`${API_BASE}${path}`); } catch { throw new Error(UNREACHABLE); }
+  const out = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(out.error ?? `The server answered ${r.status}.`);
+  return out as T;
+}
+export const checkAnchor = (id: string) => getJson<AnchorCheck>(`/api/report/${encodeURIComponent(id)}/check`);
+export const anchorReport = (id: string) => post<{ anchor: Anchor }>(`/api/report/${encodeURIComponent(id)}/anchor`, {});
+/** The exact bytes whose sha256 the anchor commits to. */
+export async function canonicalReport(id: string): Promise<string> {
+  let r: Response;
+  try { r = await fetch(`${API_BASE}/api/report/${encodeURIComponent(id)}/canonical`); } catch { throw new Error(UNREACHABLE); }
+  if (!r.ok) throw new Error(`The server answered ${r.status}.`);
+  return r.text();
+}
 /** Ask the server to build a shareable report (it re-runs scan, exploit test and fix verification itself). */
 export const createReport = (subject: Subject, patched: string | null, test: string | null, fixTest: string | null) =>
   post<{ id: string; ms: number }>('/api/report', { ...subject, ...(patched ? { patched } : {}), ...(test ? { test } : {}), ...(fixTest ? { fixTest } : {}) });

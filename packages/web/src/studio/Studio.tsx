@@ -264,7 +264,7 @@ export function Studio() {
     };
     try {
       if (kind === 'attack') {
-        setRunning('attack'); log('cmd', `elenchos attack ${f.label}  (forge test on a local EVM, real forged proof)`);
+        setRunning('attack'); log('cmd', `elenchos attack ${f.label}  (forge test, real attacker proof)`);
         const r = await runAttack(subjectOf(f));
         for (const t of r.tests) {
           log(t.worked ? 'err' : 'ok', `${t.worked ? '[ATTACK WORKED] ' : '[BLOCKED]       '}${t.name}${t.reason ? `  · ${t.reason}` : ''}${t.gas ? `  (gas ${t.gas})` : ''}`);
@@ -397,7 +397,7 @@ export function Studio() {
     : audit.patch ? { cls: 'vuln', icon: 'error', big: 'Fix rejected', sub: audit.patch.summary }
     : audit.error ? { cls: 'warn', icon: 'warning', big: 'Audit failed', sub: audit.error }
     : stale ? { cls: 'pending', icon: 'history', big: 'Edited since the audit', sub: 'Run the audit again to refresh the findings.' }
-    : audit.attack?.detail?.status === 'exploitable' && audit.attack.detail.testSource && !stale ? { cls: 'vuln', icon: 'error', big: 'Exploit proven', sub: 'The exploit test paid the attacker on a local EVM, with a real forged proof.' }
+    : audit.attack?.detail?.status === 'exploitable' && audit.attack.detail.testSource && !stale ? { cls: 'vuln', icon: 'error', big: 'Exploit proven', sub: audit.attack.detail.network?.kind === 'sepolia-fork' ? 'The exploit test paid the attacker on a Sepolia fork, against zkVerify’s real verifier, with a receipt zkVerify really aggregated.' : 'The exploit test paid the attacker on a local EVM, with a real forged proof.' }
     : findings.some((f) => f.severity === 'critical') ? { cls: 'vuln', icon: 'error', big: 'Exploitable', sub: 'A critical hole lets an attacker’s proof through.' }
     : findings.length ? { cls: 'warn', icon: 'warning', big: `${findings.length} to fix`, sub: 'No critical hole, but these need a fix.' }
     : audit.findings ? { cls: 'safe', icon: 'pass-filled', big: 'No holes found', sub: 'None of E1, E1b, E3, E4, E6.' }
@@ -418,7 +418,7 @@ export function Studio() {
         <button className="sd-btn primary" onClick={() => runScan()} disabled={actionsDisabled} title="Slither + the five Elenchos detectors. No model."><i className={`codicon codicon-${busy === 'scan' ? 'loading codicon-modifier-spin' : 'play'}`} /><span className="lbl">Run audit</span><span className="short">Audit</span></button>
         <button className="sd-btn" onClick={() => step('forge')} disabled={actionsDisabled} title="A real Groth16 proof from an attacker circuit, with its zkVerify leaf. No model."><i className="codicon codicon-key" /><span className="lbl">Forge exploit</span><span className="short">Forge</span></button>
         <button className="sd-btn hide-md" onClick={() => step('replay')} disabled={actionsDisabled} title="Reads zkVerify's real verifier on Sepolia for the forged leaf. No model."><i className="codicon codicon-type-hierarchy" /><span>Ask zkVerify</span></button>
-        <button className="sd-btn" onClick={() => step('attack')} disabled={actionsDisabled} title="Runs a real Foundry exploit test against this file on a local EVM, with a real forged proof. No model."><i className="codicon codicon-debug-alt" /><span className="lbl">Run exploit test</span><span className="short">Exploit</span></button>
+        <button className="sd-btn" onClick={() => step('attack')} disabled={actionsDisabled} title="Runs a real Foundry exploit test against this file, on a Sepolia fork against zkVerify’s real verifier with a receipt zkVerify really aggregated. No model."><i className="codicon codicon-debug-alt" /><span className="lbl">Run exploit test</span><span className="short">Exploit</span></button>
         <button className="sd-btn hide-md" onClick={() => step('verify')} disabled={actionsDisabled} title="Compiles your edited file, re-scans it and rejects fixes that cheat. No model."><i className="codicon codicon-tools" /><span>Verify fix</span></button>
         {narrow && <button className="sd-btn" onClick={share} disabled={actionsDisabled}><i className="codicon codicon-export" /><span className="short">Share</span></button>}
         {busy && <span className="sd-busy"><span className="pulse" />{busy === 'scan' ? 'Scanning…' : busy === 'tool' ? 'Running…' : 'Agent working…'}</span>}

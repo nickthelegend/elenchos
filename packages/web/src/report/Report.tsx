@@ -4,12 +4,13 @@ import { useEffect, useMemo, useState } from 'react';
 import '@vscode/codicons/dist/codicon.css';
 import { API_BASE, getReport, type Report as R, type AttackResult } from '../api.ts';
 import { Mark } from '../icons.tsx';
+import { ProofOfAudit } from './Anchor.tsx';
 import './report.css';
 
 function headline(r: R): { cls: 'bad' | 'ok' | 'warn' | 'dim'; icon: string; big: string; sub: string } {
   const crit = r.findings.filter((f) => f.severity === 'critical').length;
   if (r.fix?.verified && r.fix.attack?.status !== 'exploitable') return { cls: 'ok', icon: 'verified-filled', big: 'Fix verified', sub: `${r.findings.length} finding${r.findings.length === 1 ? '' : 's'} in the original; the fix compiles, scans clean${r.fix.attack?.status === 'blocked' ? ', and every attack now reverts' : ''}.` };
-  if (r.attack?.status === 'exploitable') return { cls: 'bad', icon: 'error', big: 'Exploit proven', sub: 'The exploit test paid the attacker on a local EVM, with a real forged proof.' };
+  if (r.attack?.status === 'exploitable') return { cls: 'bad', icon: 'error', big: 'Exploit proven', sub: r.attack.network?.kind === 'sepolia-fork' ? 'The exploit test paid the attacker on a Sepolia fork, against zkVerify’s real verifier, with a receipt zkVerify really aggregated.' : 'The exploit test paid the attacker on a local EVM, with a real forged proof.' };
   if (crit) return { cls: 'bad', icon: 'error', big: `${crit} critical`, sub: 'A critical hole lets an attacker’s proof through.' };
   if (r.findings.length) return { cls: 'warn', icon: 'warning', big: `${r.findings.length} to fix`, sub: 'No critical hole, but these need a fix.' };
   if (r.compileError) return { cls: 'dim', icon: 'warning', big: 'Does not compile', sub: r.compileError };
@@ -52,6 +53,9 @@ function markdown(r: R, link: string): string {
   att(r.attack, 'original');
   if (r.fix) { lines.push('', '## Fix', '', `${r.fix.verified ? 'Verified' : 'Rejected'}: ${r.fix.reason}`, `- Fix sha256: \`${r.fix.sha256}\``); att(r.fix.attack, 'with the fix'); }
   if (r.forgery) lines.push('', '## Forged proof used', '', `- Attacker vk hash (from a zkVerify node): \`${r.forgery.vkHash}\``, `- zkVerify leaf: \`${r.forgery.leaf}\``, `- Public inputs: ${r.forgery.inputs.join(', ')}`);
+  const a = r.anchor;
+  if (a?.status === 'aggregated') lines.push('', '## Proof of audit (zkVerify)', '', `- Verdict proven: ${a.verdictLabel}`, `- Report sha256 (canonical JSON): \`${a.digest}\``, `- Auditor id: \`${a.auditor}\``,
+    `- zkVerify tx: https://zkverify-testnet.subscan.io/extrinsic/${a.txHash}`, `- Aggregation #${a.aggregationId}, domain ${a.domainId}, leaf \`${a.leaf}\``, `- Check: \`verifyProofAggregation\` on Sepolia ${a.verifier}`);
   lines.push('', '---', `Every result above was produced by the Elenchos server on the source with this sha256. ${link}`);
   return lines.join('\n');
 }
@@ -71,7 +75,11 @@ export function ReportPage({ id }: { id: string }) {
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [showSrc, setShowSrc] = useState(false);
-  useEffect(() => { document.title = 'Report · Elenchos'; getReport(id).then(setR, (e) => setErr(String(e.message ?? e))); }, [id]);
+  const load = () => getReport(id).then(setR, (e) => setErr(String(e.message ?? e)));
+  useEffect(() => { document.title = 'Report · Elenchos'; load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // While the report is being anchored on zkVerify, follow its progress.
+  const anchoring = r?.anchor?.status === 'proving' || r?.anchor?.status === 'submitted';
+  useEffect(() => { if (!anchoring) return; const t = setInterval(load, 4000); return () => clearInterval(t); }, [anchoring, id]); // eslint-disable-line react-hooks/exhaustive-deps
   const link = `${window.location.origin}${window.location.pathname}#/r/${id}`;
   const badgeUrl = `${API_BASE || window.location.origin}/api/badge/${id}.svg`;
   const badgeMd = `[![Elenchos](${badgeUrl})](${link})`;
@@ -136,7 +144,9 @@ export function ReportPage({ id }: { id: string }) {
         {(r.attack || r.fix?.attack) && (
           <section className="rp-sec">
             <h2><i className="codicon codicon-debug-alt" />Exploit test</h2>
-            <p className="rp-lead">A Foundry test on a local EVM. The forged receipt is real: a Groth16 proof from an attacker circuit, with its vk hash read from a zkVerify node. A stand-in aggregation vouches only for leaves that were really aggregated. Each attack asserts that the attacker got paid.</p>
+            {r.attack?.network?.kind === 'sepolia-fork'
+              ? <p className="rp-lead">A Foundry test on a fork of Ethereum Sepolia, against <a href={`https://sepolia.etherscan.io/address/${r.attack.network.verifier}`} target="_blank" rel="noreferrer">zkVerify’s real verifier contract</a>. The attacker’s receipt is real: zkVerify verified a Groth16 proof of the attacker’s own circuit and aggregated it to Sepolia (aggregation #{r.attack.network.aggregationId}{r.attack.network.forgedTx && <>, <a href={`https://zkverify-testnet.subscan.io/extrinsic/${r.attack.network.forgedTx}`} target="_blank" rel="noreferrer">zkVerify tx</a></>}). Each attack asserts that the attacker got paid.</p>
+              : <p className="rp-lead">A Foundry test on a local EVM. The forged receipt is real: a Groth16 proof from an attacker circuit, with its vk hash read from a zkVerify node. A stand-in aggregation vouches only for leaves that were really aggregated. Each attack asserts that the attacker got paid.{r.attack?.forkError && ` ${r.attack.forkError}`}</p>}
             <div className={`rp-att${r.fix?.attack ? ' two' : ''}`}>
               {[['Original', r.attack], ...(r.fix?.attack ? [['With the fix', r.fix.attack]] : [])].map(([label, a]) => a && typeof a !== 'string' && (
                 <div key={label as string} className={`rp-attcol a-${a.status}`}>
@@ -172,6 +182,12 @@ export function ReportPage({ id }: { id: string }) {
             <pre className="rp-diff">{d.map((l, i) => (l === null ? <span key={i} className="gap">⋯</span> : <span key={i} className={l.t === '+' ? 'add' : l.t === '-' ? 'del' : ''}>{l.t} {l.s}{'\n'}</span>))}</pre>
           </section>
         )}
+
+        <section className="rp-sec">
+          <h2><i className="codicon codicon-zap" />Proof of audit on zkVerify</h2>
+          <p className="rp-lead">The Elenchos auditor proves this report’s sha256 and verdict in a zero-knowledge proof. zkVerify verifies it and aggregates it to its verifier contract on Ethereum Sepolia, so anyone can check that this exact report was published by this auditor, unchanged, at this time.</p>
+          <ProofOfAudit id={r.id} anchor={r.anchor} onChange={load} />
+        </section>
 
         <section className="rp-sec">
           <h2><i className="codicon codicon-verified" />Badge</h2>
