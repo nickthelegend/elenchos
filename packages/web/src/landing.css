@@ -314,3 +314,11 @@
   .wcase { padding: 20px 18px 16px; } .wild .wcase-x { font-size: 21px; } .wcase-code { font-size: 12px; }
   .wcase-foot { flex-direction: column; gap: 10px; }
 }
+
+/* Found in the wild: anonymous cases (no owner, repo or link) */
+.wcase-anon { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; flex: none;
+  font: 600 15px/1 var(--mono, ui-monospace, monospace); color: var(--ink-2, #a6adb6);
+  background: rgba(255,255,255,.04); border: 1px dashed rgba(255,255,255,.18); }
+.wcase.is-anon { cursor: default; }
+.wcase.is-anon:hover { transform: none; }
+.wcase.is-anon .wcase-foot span:last-child { color: var(--ink-3, #6b7380); }

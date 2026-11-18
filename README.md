@@ -36,14 +36,14 @@ Elenchos isn't a toy on demo contracts. We pointed it at the public zkVerify-eco
 | Repository | Function | What an attacker gets |
 |---|---|---|
 | [`smilewithkhushi/anon-claim`](https://github.com/smilewithkhushi/anon-claim/blob/f61296e596558a0a23a8769e7407ef162308c0e8/contracts/src/AnonClaim.sol#L135) | `AnonClaim.claim` | Drains the ETH reward pool to any address |
-| [`dipanshuhappy/access_fi`](https://github.com/dipanshuhappy/access_fi/blob/8ee4f7c1df8c43207b7067b6f84e80bbde3d6581/contracts/src/VerifyProof.sol#L154) | `VerifyProof.verifyAndMint` | Mints access NFTs with no valid credential |
-| [`Nithin-Varma/zkrl`](https://github.com/Nithin-Varma/zkrl/blob/eefbd299558bd604f9786713b384ffabfd90a870/packages/contracts/src/IdentityRegister.sol#L71) | `IdentityRegistry.verifyAadhar` | Links any identity to any wallet |
-| [`cadalt0/NULLID-ZKVERIFY`](https://github.com/cadalt0/NULLID-ZKVERIFY/blob/2446d1bc3abdc97a5196615676aaf74622d607f8/contracts/EmlProofRecorder.sol#L111) | `EmlProofRecorder.recordWithLeaf` | Records false email attestations |
+| Project B *(repo withheld)* | access-NFT mint | Mints access NFTs with no valid credential |
+| Project C *(repo withheld)* | identity registry | Links any identity to any wallet |
+| Project D *(repo withheld)* | email-attestation recorder | Records false email attestations |
 
-Every link lands on the exact vulnerable line. Elenchos reproduces the pattern on a **fork of Ethereum
+anon-claim is named and links to the exact vulnerable line; the other three teams stay anonymous while we tell them privately. Elenchos reproduces the pattern on a **fork of Ethereum
 Sepolia against zkVerify's real verifier**, with a proof zkVerify actually aggregated. **→ [Full write-up with
 the exploit and the fix for each: `docs/FINDINGS.md`](docs/FINDINGS.md).** (Testnet projects, no funds at
-risk; authors notified, fix included.)
+risk; fix included.)
 
 ## Elenchos Studio: an online auditor for ZK contracts
 
