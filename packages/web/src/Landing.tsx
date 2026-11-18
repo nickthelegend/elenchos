@@ -342,36 +342,60 @@ function colour(l: string) {
 }
 
 const WILD = [
-  { repo: 'smilewithkhushi/anon-claim', fn: 'AnonClaim.claim', x: 'Drains the ETH reward pool to any address — no eligibility proof', url: 'https://github.com/smilewithkhushi/anon-claim/blob/f61296e596558a0a23a8769e7407ef162308c0e8/contracts/src/AnonClaim.sol#L135' },
-  { repo: 'dipanshuhappy/access_fi', fn: 'VerifyProof.verifyAndMint', x: 'Mints access NFTs with no valid credential', url: 'https://github.com/dipanshuhappy/access_fi/blob/8ee4f7c1df8c43207b7067b6f84e80bbde3d6581/contracts/src/VerifyProof.sol#L154' },
-  { repo: 'Nithin-Varma/zkrl', fn: 'IdentityRegistry.verifyAadhar', x: 'Links any identity hash to any wallet', url: 'https://github.com/Nithin-Varma/zkrl/blob/eefbd299558bd604f9786713b384ffabfd90a870/packages/contracts/src/IdentityRegister.sol#L71' },
-  { repo: 'cadalt0/NULLID-ZKVERIFY', fn: 'EmlProofRecorder.recordWithLeaf', x: 'Records false email attestations against any tx hash', url: 'https://github.com/cadalt0/NULLID-ZKVERIFY/blob/2446d1bc3abdc97a5196615676aaf74622d607f8/contracts/EmlProofRecorder.sol#L111' },
-];
+  { owner: 'smilewithkhushi', name: 'anon-claim', what: 'Anonymous ETH reward claims',
+    x: 'Anyone drains the reward pool to their own address.', file: 'AnonClaim.sol',
+    url: 'https://github.com/smilewithkhushi/anon-claim/blob/f61296e596558a0a23a8769e7407ef162308c0e8/contracts/src/AnonClaim.sol#L135',
+    code: [[135, 'verifyProofAggregation(…, ', '_leaf', ', …)'], [142, 'recipient.call{value: rewardAmount}("");', '', '']] },
+  { owner: 'dipanshuhappy', name: 'access_fi', what: 'Credential-gated access NFTs',
+    x: 'Anyone mints an access NFT with no credential.', file: 'VerifyProof.sol',
+    url: 'https://github.com/dipanshuhappy/access_fi/blob/8ee4f7c1df8c43207b7067b6f84e80bbde3d6581/contracts/src/VerifyProof.sol#L154',
+    code: [[154, 'verifyProofAggregation(…, ', 'leaf', ', …)'], [177, 'nftContract.mint(msg.sender, tokenId);', '', '']] },
+  { owner: 'Nithin-Varma', name: 'zkrl', what: 'Identity layer for undercollateralized loans',
+    x: 'Anyone links any identity to any wallet.', file: 'IdentityRegister.sol',
+    url: 'https://github.com/Nithin-Varma/zkrl/blob/eefbd299558bd604f9786713b384ffabfd90a870/packages/contracts/src/IdentityRegister.sol#L71',
+    code: [[71, 'verifyProofAggregation(…, ', '_leaf', ', …)'], [82, 'identityToAddress[identityHash] = wallet;', '', '']] },
+  { owner: 'cadalt0', name: 'NULLID-ZKVERIFY', what: 'ZK email affiliation attestations',
+    x: 'Anyone records a false attestation for any tx.', file: 'EmlProofRecorder.sol',
+    url: 'https://github.com/cadalt0/NULLID-ZKVERIFY/blob/2446d1bc3abdc97a5196615676aaf74622d607f8/contracts/EmlProofRecorder.sol#L111',
+    code: [[111, 'verifyProofAggregation(…, ', 'leaf', ', …)'], [122, 'statementToTxHash[leaf] = relayerTxHash;', '', '']] },
+] as const;
 
 function FoundInWild() {
   return (
-    <section className="sec" id="wild">
+    <section className="sec wild" id="wild">
       <div className="l-wrap">
-        <div className="sec-head">
-          <span className="eyebrow">Not a toy on demo contracts</span>
-          <h2>Found in the wild: 4 live zkVerify contracts, 1 critical bug.</h2>
-          <p>We pointed Elenchos at the public zkVerify-ecosystem repos. It flagged four real hackathon
-            contracts with the exact bug it was built to catch — each takes the proof leaf from the caller and
-            never rebuilds it, so any proof zkVerify ever aggregated passes as a valid claim.</p>
+        <div className="wild-top">
+          <div className="sec-head">
+            <span className="eyebrow coral">Found in the wild</span>
+            <h2>Four live zkVerify apps. One move breaks all of them.</h2>
+            <p>We pointed Elenchos at the public zkVerify ecosystem. Each of these contracts checks a proof
+              <code>leaf</code> that the caller hands it, then acts. Any proof zkVerify ever aggregated passes.</p>
+          </div>
+          <dl className="wild-stats">
+            <div><dt>4</dt><dd>live contracts</dd></div>
+            <div><dt>1</dt><dd>shared bug</dd></div>
+            <div><dt>0</dt><dd>valid proofs needed</dd></div>
+          </dl>
         </div>
-        <div className="holes">
+        <div className="wild-grid">
           {WILD.map((w) => (
-            <a key={w.repo} className="hole sev-critical" href={w.url} target="_blank" rel="noreferrer">
-              <div className="hole-top"><span className="hole-r">{w.repo}</span><span className="sev critical">critical</span></div>
-              <h3><code>{w.fn}</code></h3>
-              <p className="hole-x"><b>Attacker gets</b>{w.x}</p>
-              <p className="hole-f"><b>Evidence</b>opens the exact vulnerable line ↗</p>
+            <a key={w.name} className="wcase" href={w.url} target="_blank" rel="noreferrer">
+              <div className="wcase-head">
+                <img src={`https://github.com/${w.owner}.png?size=80`} alt="" width={36} height={36} loading="lazy" />
+                <div className="wcase-id"><b>{w.owner}/{w.name}</b><span>{w.what}</span></div>
+                <span className="wcase-sev">Critical</span>
+              </div>
+              <p className="wcase-x">{w.x}</p>
+              <pre className="wcase-code">{w.code.map(([n, a, hot, b]) => (
+                <span key={n} className="wl"><i>{n}</i>{a}{hot && <mark>{hot}</mark>}{b}{hot && <em>  ← from the caller</em>}{'\n'}</span>
+              ))}</pre>
+              <div className="wcase-foot"><span>{w.file} · line {w.code[0][0]}</span><span>View on GitHub <Arrow /></span></div>
             </a>
           ))}
         </div>
-        <p className="wild-note">Reproduced on a fork of Ethereum Sepolia against zkVerify’s real verifier, with
-          a proof zkVerify actually aggregated. Testnet projects, no funds at risk; authors notified, fix
-          included. <a href={`${REPO}/blob/main/docs/FINDINGS.md`}>Read the full write-up <Arrow /></a></p>
+        <p className="wild-note">Reproduced on a fork of Ethereum Sepolia against zkVerify’s real verifier, with a proof
+          zkVerify actually aggregated. Testnet apps, no funds at risk; authors notified, fix included.{' '}
+          <a href={`${REPO}/blob/main/docs/FINDINGS.md`}>Full write-up <Arrow /></a></p>
       </div>
     </section>
   );

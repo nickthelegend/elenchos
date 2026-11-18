@@ -277,10 +277,40 @@
 }
 
 /* Found in the wild */
-a.hole { text-decoration: none; color: inherit; }
-a.hole:hover { border-color: var(--acc, var(--line-3)); }
-#wild .hole-r { font-size: 15px; word-break: break-all; color: var(--ink); }
-#wild .hole h3 { font-family: var(--mono); font-size: 15px; }
-#wild .hole h3 code { background: none; }
-.wild-note { margin-top: 20px; font-size: 14px; line-height: 1.6; color: var(--ink-3); }
-.wild-note a { color: var(--ink); white-space: nowrap; }
+.wild { background: radial-gradient(900px 420px at 85% 0%, rgba(255,111,97,.07), transparent 70%); }
+.wild-top { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 48px; align-items: end; margin-bottom: 44px; }
+.wild-top .sec-head { margin-bottom: 0; }
+.wild-top .sec-head p code { font: 500 .92em var(--mono); color: var(--coral); background: var(--coral-soft); padding: 1px 6px; border-radius: 6px; margin: 0 .25em; }
+.wild-stats { display: flex; gap: 36px; margin: 0; }
+.wild-stats div { display: flex; flex-direction: column; gap: 8px; }
+.wild-stats dt { font: 700 64px/1 var(--display); letter-spacing: -.04em; color: var(--ink); }
+.wild-stats div:last-child dt { color: var(--coral); }
+.wild-stats dd { margin: 0; font: 500 12px/1.3 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); max-width: 9em; }
+.wild-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 20px; }
+.wcase { display: flex; flex-direction: column; gap: 18px; padding: 26px 26px 20px; border: 1px solid var(--line-2); border-radius: var(--r-xl); background: linear-gradient(180deg, rgba(18,26,51,.85), rgba(9,13,27,.85)); color: inherit; text-decoration: none; box-shadow: var(--shadow); transition: border-color .3s var(--ease), transform .3s var(--ease); min-width: 0; }
+.wcase:hover { border-color: rgba(255,111,97,.45); transform: translateY(-3px); }
+.wcase-head { display: flex; align-items: center; gap: 14px; }
+.wcase-head img { width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--line-3); background: var(--surface-2); flex: none; }
+.wcase-id { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+.wcase-id b { font: 600 16px/1.2 var(--mono); color: var(--ink); overflow-wrap: anywhere; }
+.wcase-id span { font-size: 14px; color: var(--ink-3); }
+.wcase-sev { flex: none; font: 600 11px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--coral); background: var(--coral-soft); border: 1px solid rgba(255,111,97,.35); padding: 7px 10px; border-radius: 999px; }
+.wild .wcase-x { margin: 0; font: 600 27px/1.2 var(--display); letter-spacing: -.02em; color: var(--ink); }
+.wcase-code { margin: 0; padding: 14px 0; border-radius: var(--r); background: #050711; border: 1px solid var(--line); font: 400 13.5px/1.75 var(--mono); color: var(--ink-2); overflow-x: auto; white-space: pre; }
+.wcase-code .wl { display: block; padding: 0 16px; }
+.wcase-code .wl:first-child { background: rgba(255,111,97,.07); box-shadow: inset 3px 0 0 var(--coral); }
+.wcase-code i { font-style: normal; color: var(--ink-4); display: inline-block; width: 3.2em; user-select: none; }
+.wcase-code mark { background: rgba(255,111,97,.22); color: #ffb3aa; border-radius: 4px; padding: 1px 3px; }
+.wcase-code em { font-style: normal; color: var(--coral); }
+.wcase-foot { margin-top: auto; display: flex; justify-content: space-between; gap: 12px; font: 500 13px/1 var(--mono); color: var(--ink-3); }
+.wcase-foot span:last-child { color: var(--cobalt-2); display: inline-flex; gap: 6px; align-items: center; }
+.wcase:hover .wcase-foot span:last-child { color: var(--ink); }
+.wild .wild-note { margin: 26px 0 0; font-size: 15px; line-height: 1.6; color: var(--ink-3); max-width: 860px; }
+.wild-note a { color: var(--ink); display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; }
+@media (max-width: 1040px) { .wild-top { grid-template-columns: 1fr; gap: 28px; } }
+@media (max-width: 860px) { .wild-grid { grid-template-columns: 1fr; } }
+@media (max-width: 640px) {
+  .wild-stats { gap: 22px; } .wild-stats dt { font-size: 44px; }
+  .wcase { padding: 20px 18px 16px; } .wild .wcase-x { font-size: 21px; } .wcase-code { font-size: 12px; }
+  .wcase-foot { flex-direction: column; gap: 10px; }
+}
