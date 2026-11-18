@@ -9,6 +9,7 @@ import { verifyPatch, type PatchResult } from '@elenchos/core/src/patch.ts';
 import { proveForgery, poseidon1, proveClaim, shutdownProver } from '@elenchos/forge/src/prove.ts';
 import { groth16Statement } from '@elenchos/forge/src/statement.ts';
 import { zkVerifyVkHash } from '@elenchos/forge/src/vkhash.ts';
+import { realReceipts } from './exploit.ts';
 
 export type ToolEvent = { tool: string; status: 'running' | 'ok' | 'setup' | 'error'; summary: string; detail?: unknown };
 
@@ -74,6 +75,20 @@ export async function replayTool(leaf: Hex): Promise<{ event: ToolEvent }> {
     const agg = await latestAggregation(client);
     const ok = await client.readContract({ address: ZKVERIFY, abi, functionName: 'verifyProofAggregation',
       args: [agg.domainId, agg.aggregationId, leaf, [], 1n, 0n] });
+    // The attacker can submit their proof: Elenchos did, through Kurier. zkVerify verified a proof of the same attacker
+    // circuit and aggregated it to Sepolia, and the verifier answers true for that real receipt.
+    const real = realReceipts();
+    if (real && !ok) {
+      const f = real.forged;
+      const yes = await client.readContract({ address: ZKVERIFY, abi, functionName: 'verifyProofAggregation',
+        args: [BigInt(f.domainId), BigInt(f.aggregationId), f.leaf as Hex, f.merklePath as Hex[], BigInt(f.leafCount), BigInt(f.index)] });
+      return { event: { tool: 'replay', status: 'ok',
+        summary: yes
+          ? `zkVerify's verifier on Sepolia: this fresh forged leaf ${leaf.slice(0, 10)}… was never submitted, so it is in no aggregation. But anyone can submit one: zkVerify verified a proof of the same attacker circuit and aggregated it (aggregation #${f.aggregationId}), and verifyProofAggregation returns TRUE for it. zkVerify is right, the proof is valid for the attacker's circuit. The hole is a contract that lets the caller pick the key.`
+          : `zkVerify's verifier on Sepolia says no to the fresh forged leaf, and did not confirm the stored attacker receipt (aggregation #${f.aggregationId}) either.`,
+        detail: { accepted: false, verifier: ZKVERIFY, domainId: Number(agg.domainId), aggregationId: Number(agg.aggregationId), aggregationRoot: agg.root, block: Number(agg.block), leaf,
+          realReceipt: { accepted: yes, aggregationId: f.aggregationId, domainId: f.domainId, leaf: f.leaf, txHash: f.txHash, jobId: f.jobId } } } };
+    }
     return { event: { tool: 'replay', status: 'ok',
       summary: ok ? `the verifier ACCEPTED ${leaf.slice(0, 10)}… in aggregation ${agg.aggregationId} (unexpected)`
         : `zkVerify's verifier says no: the forged leaf ${leaf.slice(0, 10)}… is not in real aggregation #${agg.aggregationId} (domain ${agg.domainId}, block ${agg.block}). zkVerify isn't fooled; only a consumer that trusts the wrong key is.`,
