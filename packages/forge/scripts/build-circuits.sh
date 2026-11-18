@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compiles both circuits and runs a local Groth16 setup (a fresh powers-of-tau ceremony on this machine;
+# Compiles the circuits and runs a local Groth16 setup (a fresh powers-of-tau ceremony on this machine;
 # fine for a red-team demo, never for production). Outputs go to ../../build (gitignored).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -13,7 +13,9 @@ if [ ! -s pot10_final.ptau ]; then
   "$SNARKJS" powersoftau prepare phase2 pot10_1.ptau pot10_final.ptau >/dev/null
   rm -f pot10_0.ptau pot10_1.ptau
 fi
-for c in claim attacker; do
+for c in claim attacker audit; do
+  # Never rebuild a circuit that already has keys: its vk hash is published (docs, receipts, report anchors).
+  if [ -s "$c.zkey" ] && [ -s "${c}_vk.json" ]; then echo "kept $c (keys exist)"; continue; fi
   circom "$ROOT/circuits/$c.circom" --r1cs --wasm --sym -o "$B" >/dev/null
   "$SNARKJS" groth16 setup "$c.r1cs" pot10_final.ptau "${c}_0.zkey" >/dev/null
   "$SNARKJS" zkey contribute "${c}_0.zkey" "${c}.zkey" --name="elenchos-local" -e="$(head -c 32 /dev/urandom | xxd -p -c 64)" >/dev/null

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import * as snarkjs from 'snarkjs';
 
 const BUILD = fileURLToPath(new URL('../../../build/', import.meta.url));
-export type Circuit = 'claim' | 'attacker';
+export type Circuit = 'claim' | 'attacker' | 'audit';
 export type Groth16Proof = { pi_a: string[]; pi_b: string[][]; pi_c: string[]; protocol: string; curve: string };
 export type ProofResult = { circuit: Circuit; proof: Groth16Proof; publicSignals: string[]; vk: unknown; ms: number; verifiedLocally: boolean };
 
@@ -34,6 +34,12 @@ export async function proveClaim(recipient: bigint, amount: bigint, secret: bigi
 /** The forged claim: a valid proof of the attacker circuit with any recipient, amount and nullifier. */
 export async function proveForgery(recipient: bigint, amount: bigint, nullifier: bigint) {
   return prove('attacker', { recipient: recipient.toString(), amount: amount.toString(), nullifier: nullifier.toString() });
+}
+
+/** Proof of audit: the report digest (two 128-bit halves of its sha256) and verdict, from the holder of `secret`. */
+export async function proveAudit(digestHex: string, verdict: number, secret: bigint, auditor: bigint) {
+  const d = BigInt(`0x${digestHex}`);
+  return prove('audit', { digestHi: (d >> 128n).toString(), digestLo: (d & ((1n << 128n) - 1n)).toString(), verdict: String(verdict), auditor: auditor.toString(), secret: secret.toString() });
 }
 
 /** The claim nullifier: Poseidon(secret), the same hash the circuit enforces. */

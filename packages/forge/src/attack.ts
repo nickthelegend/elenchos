@@ -21,14 +21,20 @@ const client = createPublicClient({ chain: sepolia, transport: http(process.env.
 const abi = parseAbi(['function verifyProofAggregation(uint256,uint256,bytes32,bytes32[],uint256,uint256) view returns (bool)']);
 const log = (...a: unknown[]) => console.log(new Date().toISOString().slice(11, 19), ...a);
 
-async function domainFor(r: AggregationReceipt, leaf: Hex): Promise<number> {
+// zkVerify reports "Aggregated" before the aggregation is relayed to Sepolia, so keep asking the verifier for a while.
+async function domainFor(r: AggregationReceipt, leaf: Hex, label: string): Promise<number> {
   const candidates = [...new Set([r.domainId, 0, 1, 2, 3, 4, 5].filter((d): d is number => d !== undefined))];
-  for (const d of candidates) {
-    const ok = await client.readContract({ address: ZKVERIFY, abi, functionName: 'verifyProofAggregation',
-      args: [BigInt(d), BigInt(r.aggregationId), leaf, r.merkleProof, BigInt(r.numberOfLeaves), BigInt(r.leafIndex)] });
-    if (ok) return d;
+  const end = Date.now() + 45 * 60_000;
+  for (;;) {
+    for (const d of candidates) {
+      const ok = await client.readContract({ address: ZKVERIFY, abi, functionName: 'verifyProofAggregation',
+        args: [BigInt(d), BigInt(r.aggregationId), leaf, r.merkleProof, BigInt(r.numberOfLeaves), BigInt(r.leafIndex)] }).catch(() => false);
+      if (ok) return d;
+    }
+    if (Date.now() > end) throw new Error(`no domain id verifies aggregation ${r.aggregationId} on Sepolia after 45 min (tried ${candidates.join(', ')})`);
+    log(`${label}: aggregation ${r.aggregationId} not on Sepolia yet; waiting for the relay`);
+    await new Promise((ok) => setTimeout(ok, 30_000));
   }
-  throw new Error(`no domain id verifies aggregation ${r.aggregationId} on Sepolia (tried ${candidates.join(', ')}); the receipt is not usable yet`);
 }
 
 async function run(label: string, p: ProofResult) {
@@ -37,13 +43,15 @@ async function run(label: string, p: ProofResult) {
   log(`${label}: vkHash ${vkHash}; submitting proof (chainId 11155111)`);
   const jobId = await submitProof(p.proof, p.publicSignals, vkHash);
   log(`${label}: job ${jobId}`);
+  // Kurier's job status does not return the public inputs, so keep them with the job id in case this run is cut short.
+  writeFileSync(`${ROOT}contracts/fixtures/pending-${label}.json`, JSON.stringify({ jobId, vkHash, inputs: p.publicSignals }, null, 2));
   const r = await waitForAggregation(jobId, (s) => log(`${label}: ${s}`));
   const inputs = p.publicSignals.map(BigInt);
   const leaf = groth16Statement(vkHash, inputs);
   if (r.leaf && r.leaf.toLowerCase() !== leaf.toLowerCase()) {
     throw new Error(`${label}: our statement hash ${leaf} differs from zkVerify's leaf ${r.leaf}`);
   }
-  const domainId = await domainFor(r, leaf);
+  const domainId = await domainFor(r, leaf, label);
   log(`${label}: aggregated (id ${r.aggregationId}, domain ${domainId}, leaf ${leaf})`);
   return {
     vkHash, domainId, aggregationId: r.aggregationId, inputs: p.publicSignals, merklePath: r.merkleProof,
@@ -59,6 +67,7 @@ const forged = await proveForgery(attacker, 1_000_000n, BigInt(Date.now()));
 await shutdownProver();
 log(`proofs ready: honest ${honest.ms} ms, forged ${forged.ms} ms (both verified locally)`);
 
+if (!existsSync(`${ROOT}contracts/fixtures`)) mkdirSync(`${ROOT}contracts/fixtures`, { recursive: true });
 const [h, f] = await Promise.all([run('honest', honest), run('forged', forged)]);
 const out = `${ROOT}contracts/fixtures/receipts.json`;
 if (!existsSync(`${ROOT}contracts/fixtures`)) mkdirSync(`${ROOT}contracts/fixtures`, { recursive: true });

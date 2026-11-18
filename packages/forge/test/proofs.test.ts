@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { keccak256, toBytes } from 'viem';
-import { poseidon1, proveClaim, proveForgery, shutdownProver } from '../src/prove.ts';
+import { poseidon1, proveAudit, proveClaim, proveForgery, shutdownProver } from '../src/prove.ts';
 import { groth16Statement } from '../src/statement.ts';
 
 after(shutdownProver);
@@ -18,6 +18,16 @@ test('honest claim proof verifies and respects the 1,000 cap', async () => {
   assert.deepEqual(r.publicSignals, ['48879', '500', nullifier.toString()]);
   await assert.rejects(proveClaim(0xbeefn, 1_000_000n, secret, nullifier), 'the claim circuit refuses an amount over the cap');
   await assert.rejects(proveClaim(0xbeefn, 500n, secret + 1n, nullifier), 'and a wrong secret');
+});
+
+test('proof of audit: binds the report digest and verdict to the auditor key, and refuses a wrong key', async () => {
+  const secret = 987654321987654321n; const auditor = await poseidon1(secret);
+  const digest = 'ff'.repeat(32);
+  const r = await proveAudit(digest, 2, secret, auditor);
+  assert.equal(r.verifiedLocally, true);
+  assert.deepEqual(r.publicSignals, [(2n ** 128n - 1n).toString(), (2n ** 128n - 1n).toString(), '2', auditor.toString()]);
+  await assert.rejects(proveAudit(digest, 2, secret + 1n, auditor), 'someone without the auditor secret cannot prove for that auditor');
+  await assert.rejects(proveAudit(digest, 4, secret, auditor), 'and the verdict is one of four codes');
 });
 
 test('the attacker circuit "proves" a million-token mint with the same public interface', async () => {
