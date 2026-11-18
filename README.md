@@ -24,13 +24,19 @@ next to it, and an audit panel with the verdict.
   no key; findings land as squiggles on the exact line, in Problems and in the audit panel.
 - **Ask the agent:** "Forge exploit", "Ask zkVerify" and "Verify fix" are one click each, or ask in plain words. Every
   tool call streams into the terminal and the chat.
-- **Run exploit test:** a real Foundry test on a local EVM, with a real forged Groth16 proof, shows whether the
-  attacker gets paid (`VulnerableMint`: 1,000,000 minted, then 2,000,000 on a replay). Run it again after the fix and
-  the same attacks revert. Stock tests cover the common claim shapes; the agent writes its own for anything else.
+- **Run exploit test:** a real Foundry test on a **fork of Ethereum Sepolia, against zkVerify's real verifier
+  contract**, with an attacker-circuit proof that zkVerify really verified and aggregated (aggregation 270049, through
+  Kurier). It shows whether the attacker gets paid (`VulnerableMint`: 1,000,000 minted, then 2,000,000 on a replay).
+  Run it again after the fix and the same attacks revert. Stock tests cover the common claim shapes; the agent writes
+  its own for anything else (those run on a local EVM with a stand-in aggregation).
 - **Apply the fix:** a verified patch opens as a side-by-side diff; one click applies it to your file.
 - **Share report:** the server re-runs the audit, the exploit test and your fix, stores the result and gives you a
   link ([example](https://elenchos-studio.vercel.app/#/r/usMu9WtO)) with a README badge and Markdown / SARIF / JSON
   export. The browser only sends source; every result on the page was produced by the server.
+- **Proof of audit on zkVerify:** every report is anchored. The server proves, in a Groth16 circuit, "this auditor
+  published a report with this sha256 and this verdict", submits it to zkVerify through Kurier, and the report page
+  follows it until it is aggregated to Sepolia. **Check it on Sepolia** recomputes the sha256 in your browser and asks
+  zkVerify's verifier contract (`verifyProofAggregation`); change one finding and it says false.
 - **Connect a GitHub repo** (cloned with submodules, audited with imports resolved) or **audit a deployed contract
   by address** on ten chains: its verified source comes from Sourcify, or Blockscout, with the exact compiler it was
   deployed with, and a proxy points you to its implementation.
@@ -91,8 +97,8 @@ real tools, and every call shows up as a card.
   function, or ripping out the receipt check). An OpenAI model adds an independent second opinion; the deterministic
   verdict stands on its own.
 
-Nothing is mocked. A tool that can't run (no Kurier key for a full aggregated receipt, no OpenAI key for the review)
-says **Setup required** — it never fakes a result.
+Nothing is mocked. A tool that can't run (no Kurier key to anchor a report, no OpenAI key for the review) says
+**Setup required** — it never fakes a result.
 
 ## What the scanner proves — and what the attack test proves
 
@@ -103,7 +109,9 @@ claim "this fix is real" on the scanner alone. `contracts/test/AttackHolds.t.sol
 mock that vouches only for statements an attacker could really get aggregated (their own circuit's) shows the forgery
 *mints* on the vulnerable contract and *reverts* on the pinned one, with no value moved — and the honest claim still
 works once, then rejects a replay. That runs in CI with no testnet key. The real-verifier replay (reading zkVerify on
-Sepolia) and the full forged-receipt fork test (with a Kurier key) are the on-chain versions of the same proof.
+Sepolia) and the forged-receipt fork test (`ForgedReceipt.fork.t.sol`, two real receipts zkVerify aggregated to
+Sepolia) are the on-chain versions of the same proof: on a Sepolia fork, zkVerify's real verifier says true for the
+attacker's proof, `VulnerableMint` mints 1,000,000 for it, and `PinnedMint` rejects it.
 
 ## Monorepo
 
@@ -121,7 +129,7 @@ Sepolia) and the full forged-receipt fork test (with a Kurier key) are the on-ch
 
 ```bash
 pnpm install
-pnpm -r test                     # all tests; the 3 forged-receipt fork tests skip until a Kurier key is set
+pnpm -r test                     # all tests; contracts: forge test --fork-url <sepolia rpc> also runs the 3 fork tests
 (cd packages/web && pnpm build)  # build the UI
 ANTHROPIC_API_KEY=... node --experimental-strip-types packages/agent/src/server.ts
 # open http://localhost:8787 (landing) and http://localhost:8787/#/app (studio)

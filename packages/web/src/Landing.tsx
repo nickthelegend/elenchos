@@ -127,10 +127,10 @@ function StudioShowcase() {
         </a>
         <div className="show-points">
           <div><b>Run audit</b><span>Slither and five detectors on any pasted contract, in about half a second. No model, no key.</span></div>
-          <div><b>Run exploit test</b><span>A real Foundry test with a real forged proof: does the attacker get paid? Run it again on the fix and watch it revert.</span></div>
+          <div><b>Run exploit test</b><span>A real Foundry test on a Sepolia fork, against zkVerify’s real verifier, with an attacker proof zkVerify really aggregated. Then on the fix: it reverts.</span></div>
           <div><b>Ask the agent</b><span>It scans, forges a real Groth16 exploit, asks zkVerify on Sepolia, writes the fix and proves it holds.</span></div>
           <div><b>Apply the fix</b><span>Only a patch that compiles, scans clean and keeps the receipt check is marked verified.</span></div>
-          <div><b>Share the report</b><span>The server re-runs everything and gives you a link, a README badge, and Markdown or SARIF export.</span></div>
+          <div><b>Share the report</b><span>The server re-runs everything, anchors the report on zkVerify, and gives you a link anyone can check on Sepolia, plus a badge.</span></div>
           <div><b>Bring any contract</b><span>Paste it, connect a GitHub repo, or load a deployed contract by address on ten chains.</span></div>
         </div>
       </div>
@@ -322,7 +322,7 @@ function TheFix() {
             </div>
             <div className="fix-card">
               <Obj name="seal" alt="" size={96} />
-              <div><h3>40 tests pass</h3><p>Real proofs, a real zkVerify node and the real Sepolia verifier. Three fork tests need a Kurier key and say so.</p></div>
+              <div><h3>73 tests pass</h3><p>Real proofs, a real zkVerify node, and real receipts zkVerify aggregated to Sepolia, replayed on a Sepolia fork against its real verifier.</p></div>
             </div>
           </div>
         </div>
@@ -343,10 +343,10 @@ function colour(l: string) {
 
 function Numbers() {
   const n = [
-    ['60', 'tests passing', 'real proofs, EVM, node and verifier'],
+    ['73', 'tests passing', 'real proofs, Sepolia fork, node and verifier'],
     ['5', 'holes detected', 'E1 · E1b · E3 · E4 · E6'],
-    ['1,000,000', 'minted by the exploit test', 'on VulnerableMint; reverted on the fix'],
-    ['#270047', 'real aggregation checked', 'on zkVerify’s Sepolia verifier'],
+    ['1,000,000', 'minted by the exploit test', 'on a Sepolia fork; reverted on the fix'],
+    ['#270049', 'the attacker’s proof, aggregated', 'zkVerify’s Sepolia verifier says true'],
   ];
   return (
     <section className="sec numbers-sec">
