@@ -18,6 +18,7 @@ import { runAttack, deniedCheatcode } from './exploit.ts';
 import { forgeryFor } from './tools.ts';
 import { badge, getReport, saveReport, sha256 } from './report.ts';
 import { handleMcp } from './mcp.ts';
+import { anchorReady, auditor, canonical, checkAnchor, resumeAnchors, startAnchor } from './anchor.ts';
 import { writeFile } from 'node:fs/promises';
 import { scan as coreScan, bySeverity } from '@elenchos/core/src/scan.ts';
 
@@ -106,7 +107,8 @@ async function route(req: any, res: any) {
   if (req.method === 'OPTIONS') { res.writeHead(204, { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type, mcp-protocol-version, mcp-session-id, authorization', 'access-control-max-age': '86400' }); res.end(); return; }
   if (req.method === 'GET' && url.pathname === '/api/targets') {
     return json(res, 200, { targets: TARGETS.map((t) => ({ id: t.id, title: t.title, language: t.language, blurb: t.blurb, source: source(t) })),
-      ready: { anthropic: Boolean(process.env.ANTHROPIC_API_KEY), openai: Boolean(process.env.OPENAI_API_KEY), rpc: true /* built-in public read-only nodes; override with SEPOLIA_RPC_URL */, kurier: Boolean(process.env.KURIER_API_KEY) },
+      ready: { anthropic: Boolean(process.env.ANTHROPIC_API_KEY), openai: Boolean(process.env.OPENAI_API_KEY), rpc: true /* built-in public read-only nodes; override with SEPOLIA_RPC_URL */, kurier: Boolean(process.env.KURIER_API_KEY), anchor: !anchorReady() },
+      auditor: await auditor(),
       chains: Object.entries(CHAINS).map(([id, c]) => ({ id, name: c.name })), model: process.env.ELENCHOS_MODEL ?? 'claude-sonnet-5-5', agentRunsPerHour: Number(process.env.ELENCHOS_INVESTIGATIONS_PER_HOUR ?? 0) || null });
   }
   // MCP (Streamable HTTP, stateless): POST JSON-RPC, get JSON back. There is no server-to-client stream, so GET is 405.
@@ -121,6 +123,17 @@ async function route(req: any, res: any) {
   }
   const rep = /^\/api\/report\/([A-Za-z0-9_-]{8})$/.exec(url.pathname);
   if (req.method === 'GET' && rep) { const r = getReport(rep[1]); return r ? json(res, 200, r) : json(res, 404, { error: 'No report with that id on this server.' }); }
+  // Proof of audit: the exact bytes that are anchored, a fresh check against zkVerify's verifier on Sepolia, and (POST)
+  // anchoring a report made before anchoring existed. New reports are anchored as soon as they are made.
+  const can = /^\/api\/report\/([A-Za-z0-9_-]{8})\/canonical$/.exec(url.pathname);
+  if (req.method === 'GET' && can) { const r = getReport(can[1]); if (!r) return json(res, 404, { error: 'No report with that id on this server.' }); res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' }); res.end(canonical(r)); return; }
+  const chk = /^\/api\/report\/([A-Za-z0-9_-]{8})\/check$/.exec(url.pathname);
+  if (req.method === 'GET' && chk) { try { return json(res, 200, await checkAnchor(chk[1])); } catch (e) { return json(res, 400, { error: clean(e) }); } }
+  const anc = /^\/api\/report\/([A-Za-z0-9_-]{8})\/anchor$/.exec(url.pathname);
+  if (req.method === 'POST' && anc) {
+    if (overBudget('anchor:global', 30)) return json(res, 429, { error: 'This server anchors at most 30 reports an hour on zkVerify.' });
+    try { return json(res, 200, { anchor: await startAnchor(anc[1]) }); } catch (e) { return json(res, 400, { error: clean(e) }); }
+  }
   const bdg = /^\/api\/badge\/([A-Za-z0-9_-]{8})\.svg$/.exec(url.pathname);
   if (req.method === 'GET' && bdg) { res.writeHead(200, { 'content-type': 'image/svg+xml', 'cache-control': 'max-age=300', 'access-control-allow-origin': '*' }); res.end(badge(getReport(bdg[1]))); return; }
   if (req.method !== 'POST' || !url.pathname.startsWith('/api/')) return serveStatic(req, res, url);
@@ -224,6 +237,8 @@ async function route(req: any, res: any) {
       return saveReport({ title, source: original, sha256: sha256(original), repo: p ? { repo: p.repo, sha: p.sha, path: String(b.path), explorer: p.explorer ?? null } : null,
         findings, compileError: failed, attack, forgery, fix, engine: 'Slither + the five Elenchos detectors · Foundry exploit test · deterministic fix verifier' });
     });
+    // Anchor it on zkVerify in the background (the report page shows the progress); skipped with "Setup required".
+    if (!anchorReady() && !overBudget('anchor:global', 30)) await startAnchor(report.id).catch(() => {});
     return json(res, 200, { id: report.id, ms: Date.now() - started });
   }
   if (url.pathname === '/api/investigate') {
@@ -260,4 +275,4 @@ function serveStatic(req: any, res: any, url: URL) {
   const ct = { html: 'text/html; charset=utf-8', js: 'text/javascript', css: 'text/css', svg: 'image/svg+xml', json: 'application/json', webp: 'image/webp', png: 'image/png', jpg: 'image/jpeg', woff2: 'font/woff2', woff: 'font/woff', ttf: 'font/ttf' }[ext] ?? 'application/octet-stream';
   res.writeHead(200, { 'content-type': ct }); res.end(readFileSync(file));
 }
-server.listen(PORT, () => console.log(`Elenchos on http://localhost:${PORT}`));
+server.listen(PORT, () => { console.log(`Elenchos on http://localhost:${PORT}`); resumeAnchors(); });

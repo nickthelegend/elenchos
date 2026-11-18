@@ -7,6 +7,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Finding } from '@elenchos/core/src/scan.ts';
 import type { AttackResult, Forgery } from './exploit.ts';
+import type { Anchor } from './anchor.ts';
 
 export type Report = {
   id: string; createdAt: string; title: string; source: string; sha256: string;
@@ -15,6 +16,8 @@ export type Report = {
   attack: AttackResult | null; forgery: Forgery | null;
   fix: null | { source: string; sha256: string; verified: boolean; compiles: boolean; reason: string; remaining: string[]; evaded: string[]; attack: AttackResult | null };
   engine: string;
+  /** Proof of audit on zkVerify (see anchor.ts); absent until anchoring starts. */
+  anchor?: Anchor;
 };
 
 const DIR = () => join(process.env.ELENCHOS_DATA ?? join(process.cwd(), '.data'), 'reports');
@@ -27,6 +30,12 @@ export async function saveReport(r: Omit<Report, 'id' | 'createdAt'>): Promise<R
   const report: Report = { id: randomBytes(6).toString('base64url'), createdAt: new Date().toISOString(), ...r };
   await writeFile(join(DIR(), `${report.id}.json`), JSON.stringify(report));
   return report;
+}
+
+/** Rewrite a stored report (used only to attach its zkVerify anchor). */
+export async function writeReport(r: Report): Promise<void> {
+  if (!/^[A-Za-z0-9_-]{8}$/.test(r.id)) throw new Error('bad report id');
+  await writeFile(join(DIR(), `${r.id}.json`), JSON.stringify(r));
 }
 
 export function getReport(id: string): Report | null {
