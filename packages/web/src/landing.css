@@ -275,3 +275,12 @@
   .l-foot-in, .l-foot-cols { grid-template-columns: 1fr; }
   .hide-sm { display: none; }
 }
+
+/* Found in the wild */
+a.hole { text-decoration: none; color: inherit; }
+a.hole:hover { border-color: var(--acc, var(--line-3)); }
+#wild .hole-r { font-size: 15px; word-break: break-all; color: var(--ink); }
+#wild .hole h3 { font-family: var(--mono); font-size: 15px; }
+#wild .hole h3 code { background: none; }
+.wild-note { margin-top: 20px; font-size: 14px; line-height: 1.6; color: var(--ink-3); }
+.wild-note a { color: var(--ink); white-space: nowrap; }

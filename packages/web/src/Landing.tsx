@@ -341,6 +341,42 @@ function colour(l: string) {
       .replace(/\b(bytes32|uint256|bool|IVerifyProofAggregation)\b/g, '<span class="c-ty">$1</span>') }} />);
 }
 
+const WILD = [
+  { repo: 'smilewithkhushi/anon-claim', fn: 'AnonClaim.claim', x: 'Drains the ETH reward pool to any address — no eligibility proof', url: 'https://github.com/smilewithkhushi/anon-claim/blob/f61296e596558a0a23a8769e7407ef162308c0e8/contracts/src/AnonClaim.sol#L135' },
+  { repo: 'dipanshuhappy/access_fi', fn: 'VerifyProof.verifyAndMint', x: 'Mints access NFTs with no valid credential', url: 'https://github.com/dipanshuhappy/access_fi/blob/8ee4f7c1df8c43207b7067b6f84e80bbde3d6581/contracts/src/VerifyProof.sol#L154' },
+  { repo: 'Nithin-Varma/zkrl', fn: 'IdentityRegistry.verifyAadhar', x: 'Links any identity hash to any wallet', url: 'https://github.com/Nithin-Varma/zkrl/blob/eefbd299558bd604f9786713b384ffabfd90a870/packages/contracts/src/IdentityRegister.sol#L71' },
+  { repo: 'cadalt0/NULLID-ZKVERIFY', fn: 'EmlProofRecorder.recordWithLeaf', x: 'Records false email attestations against any tx hash', url: 'https://github.com/cadalt0/NULLID-ZKVERIFY/blob/2446d1bc3abdc97a5196615676aaf74622d607f8/contracts/EmlProofRecorder.sol#L111' },
+];
+
+function FoundInWild() {
+  return (
+    <section className="sec" id="wild">
+      <div className="l-wrap">
+        <div className="sec-head">
+          <span className="eyebrow">Not a toy on demo contracts</span>
+          <h2>Found in the wild: 4 live zkVerify contracts, 1 critical bug.</h2>
+          <p>We pointed Elenchos at the public zkVerify-ecosystem repos. It flagged four real hackathon
+            contracts with the exact bug it was built to catch — each takes the proof leaf from the caller and
+            never rebuilds it, so any proof zkVerify ever aggregated passes as a valid claim.</p>
+        </div>
+        <div className="holes">
+          {WILD.map((w) => (
+            <a key={w.repo} className="hole sev-critical" href={w.url} target="_blank" rel="noreferrer">
+              <div className="hole-top"><span className="hole-r">{w.repo}</span><span className="sev critical">critical</span></div>
+              <h3><code>{w.fn}</code></h3>
+              <p className="hole-x"><b>Attacker gets</b>{w.x}</p>
+              <p className="hole-f"><b>Evidence</b>opens the exact vulnerable line ↗</p>
+            </a>
+          ))}
+        </div>
+        <p className="wild-note">Reproduced on a fork of Ethereum Sepolia against zkVerify’s real verifier, with
+          a proof zkVerify actually aggregated. Testnet projects, no funds at risk; authors notified, fix
+          included. <a href={`${REPO}/blob/main/docs/FINDINGS.md`}>Read the full write-up <Arrow /></a></p>
+      </div>
+    </section>
+  );
+}
+
 function Numbers() {
   const n = [
     ['73', 'tests passing', 'real proofs, Sepolia fork, node and verifier'],
@@ -456,6 +492,7 @@ export function Landing() {
         <Hero />
         <Stack />
         <StudioShowcase />
+        <FoundInWild />
         <Problem />
         <HowItWorks />
         <Holes />

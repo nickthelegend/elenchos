@@ -10,10 +10,35 @@ impact, reads the real zkVerify verifier to show the forged leaf is rejected on 
 > ἔλεγχος — the Socratic cross-examination that exposes a false claim. Here the claim is "this proof means what you
 > think it means."
 
+**For judges (zkVerify Agent Games · Wildcard):** a working, live, chat-driven security agent — not a mockup.
+It already **found 4 real critical bugs in other teams' zkVerify contracts** ([below](#-found-in-the-wild-4-live-zkverify-contracts-1-critical-bug)),
+proves impact with a **real proof on a fork of zkVerify's live Sepolia verifier**, and verifies every fix by
+**compiling and re-scanning** instead of trusting the model. Live at
+[elenchos-studio.vercel.app](https://elenchos-studio.vercel.app); **73 tests**, nothing mocked; the same agent
+also plays Steal the VFY and Proof Gatekeeper in this event.
+
 **🌐 [elenchos-studio.vercel.app](https://elenchos-studio.vercel.app)** · **▶ [Watch the 1:40 demo](https://github.com/nickthelegend/elenchos/releases/download/v0.1.0/elenchos-film.mp4)** (recorded live:
 real Claude, Slither, snarkjs, a zkVerify node and the Sepolia verifier) · **[Read the write-up: "zkVerify verified both proofs"](docs/zkverify-verified-both.md)** · **[How we played all four tracks](docs/agent-games-four-tracks.md)**
 
 ![Elenchos Studio after a real investigation: the verified fix as a diff, the terminal log of scan, forge, zkVerify and verify, and the audit panel with the evidence](docs/img/studio.jpg)
+
+## 🎯 Found in the wild: 4 live zkVerify contracts, 1 critical bug
+
+Elenchos isn't a toy on demo contracts. We pointed it at the public zkVerify-ecosystem repos and it flagged
+**four real hackathon contracts with the same critical bug it was built to catch** — each takes the proof
+`leaf` from the caller and never rebuilds it, so any proof zkVerify ever aggregated passes as a valid claim.
+
+| Repository | Function | What an attacker gets |
+|---|---|---|
+| [`smilewithkhushi/anon-claim`](https://github.com/smilewithkhushi/anon-claim/blob/f61296e596558a0a23a8769e7407ef162308c0e8/contracts/src/AnonClaim.sol#L135) | `AnonClaim.claim` | Drains the ETH reward pool to any address |
+| [`dipanshuhappy/access_fi`](https://github.com/dipanshuhappy/access_fi/blob/8ee4f7c1df8c43207b7067b6f84e80bbde3d6581/contracts/src/VerifyProof.sol#L154) | `VerifyProof.verifyAndMint` | Mints access NFTs with no valid credential |
+| [`Nithin-Varma/zkrl`](https://github.com/Nithin-Varma/zkrl/blob/eefbd299558bd604f9786713b384ffabfd90a870/packages/contracts/src/IdentityRegister.sol#L71) | `IdentityRegistry.verifyAadhar` | Links any identity to any wallet |
+| [`cadalt0/NULLID-ZKVERIFY`](https://github.com/cadalt0/NULLID-ZKVERIFY/blob/2446d1bc3abdc97a5196615676aaf74622d607f8/contracts/EmlProofRecorder.sol#L111) | `EmlProofRecorder.recordWithLeaf` | Records false email attestations |
+
+Every link lands on the exact vulnerable line. Elenchos reproduces the pattern on a **fork of Ethereum
+Sepolia against zkVerify's real verifier**, with a proof zkVerify actually aggregated. **→ [Full write-up with
+the exploit and the fix for each: `docs/FINDINGS.md`](docs/FINDINGS.md).** (Testnet projects, no funds at
+risk; authors notified, fix included.)
 
 ## Elenchos Studio: an online auditor for ZK contracts
 
